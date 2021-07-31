@@ -1,4 +1,5 @@
 #-*-coding:utf-8-*-
+# from _typeshed import Self
 import collections
 import copy
 import math
@@ -343,6 +344,14 @@ class EleSumLayer(nn.Module):
     def forward(self, x):
         return x[0] + x[1]
 
+class ExpandLayer(nn.Module):
+    def __init__(self,_max_channels):
+        super(ExpandLayer,self).__init__()
+        self._max_channels=_max_channels
+    def forward(self,inputs):
+        input_channels = inputs.size(1)
+        pcd = (0, 0, 0, 0, 0, self._max_channels - input_channels)
+        return nn.functional.pad(inputs, pcd, "constant", 0)
 class StraightLayer(nn.Module):
     def __init__(self, hardware_config, layer_config, quantize_config):
         super(StraightLayer, self).__init__()
@@ -380,6 +389,10 @@ class StraightLayer(nn.Module):
             self.layer = nn.Dropout()
         elif self.layer_config['type'] == 'element_sum':
             self.layer = EleSumLayer()
+        elif self.layer_config['type']=='AdaptiveAvgPool2d':
+            self.layer=nn.AdaptiveAvgPool2d(layer_config["output_size"])
+        elif self.layer_config['type']=="expand":
+            self.layer=ExpandLayer(layer_config["_max_channels"]) 
         else:
             assert 0, f'not support {self.layer_config["type"]}'
         # self.last_value = nn.Parameter(torch.ones(1))
@@ -412,6 +425,10 @@ class StraightLayer(nn.Module):
                 self.layer_info['features'] = self.layer_config['features']
             elif self.layer_config['type'] == 'dropout':
                 self.layer_info['type'] = 'dropout'
+            elif self.layer_config['type']=='expand':
+                self.layer_info['type']='expand'
+            elif self.layer_config['type']=='AdaptiveAvgPool2d':
+                self.layer_info['type']='AdaptiveAvgPool2d'
             else:
                 assert 0, f'not support {self.layer_config["type"]}'
         else:
@@ -448,4 +465,4 @@ class StraightLayer(nn.Module):
         return None
     def extra_repr(self):
         return str(self.hardware_config) + ' ' + str(self.layer_config) + ' ' + str(self.quantize_config)
-StraightLayerStr = ['pooling', 'relu', 'view', 'bn', 'dropout', 'element_sum']
+StraightLayerStr = ['pooling', 'relu', 'view', 'bn', 'dropout', 'element_sum','expand','AdaptiveAvgPool2d']
