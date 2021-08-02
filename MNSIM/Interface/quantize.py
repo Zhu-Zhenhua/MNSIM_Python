@@ -344,6 +344,14 @@ class EleSumLayer(nn.Module):
     def forward(self, x):
         return x[0] + x[1]
 
+class DownSampleLayer(nn.Module):
+    def __init__(self):
+        super(DownSampleLayer,self).__init__()
+    def forward(self,x):
+        return nn.functional.interpolate(
+            x, scale_factor=0.5, mode="area", recompute_scale_factor=True
+        )
+
 class ExpandLayer(nn.Module):
     def __init__(self,_max_channels):
         super(ExpandLayer,self).__init__()
@@ -389,10 +397,14 @@ class StraightLayer(nn.Module):
             self.layer = nn.Dropout()
         elif self.layer_config['type'] == 'element_sum':
             self.layer = EleSumLayer()
-        elif self.layer_config['type']=='AdaptiveAvgPool2d':
+        elif self.layer_config['type'] == 'AdaptiveAvgPool2d':
             self.layer=nn.AdaptiveAvgPool2d(layer_config["output_size"])
-        elif self.layer_config['type']=="expand":
+        elif self.layer_config['type'] == "expand":
             self.layer=ExpandLayer(layer_config["_max_channels"]) 
+        elif self.layer_config['type'] == 'downsample':
+            self.layer=DownSampleLayer()
+        elif self.layer_config['type'] == 'flatten':
+            self.layer=nn.Flatten(start_dim=layer_config["start_dim"],end_dim=layer_config["end_dim"])
         else:
             assert 0, f'not support {self.layer_config["type"]}'
         # self.last_value = nn.Parameter(torch.ones(1))
@@ -429,6 +441,10 @@ class StraightLayer(nn.Module):
                 self.layer_info['type']='expand'
             elif self.layer_config['type']=='AdaptiveAvgPool2d':
                 self.layer_info['type']='AdaptiveAvgPool2d'
+            elif self.layer_config["type"] == "downsample":
+                self.layer_config["type"] = 'downsample'
+            elif self.layer_config['type'] == 'flatten':
+                self.layer_config['type'] == 'flatten'
             else:
                 assert 0, f'not support {self.layer_config["type"]}'
         else:
@@ -465,4 +481,4 @@ class StraightLayer(nn.Module):
         return None
     def extra_repr(self):
         return str(self.hardware_config) + ' ' + str(self.layer_config) + ' ' + str(self.quantize_config)
-StraightLayerStr = ['pooling', 'relu', 'view', 'bn', 'dropout', 'element_sum','expand','AdaptiveAvgPool2d']
+StraightLayerStr = ['pooling', 'relu', 'view', 'bn', 'dropout', 'element_sum','expand','AdaptiveAvgPool2d', 'downsample','flatten']
