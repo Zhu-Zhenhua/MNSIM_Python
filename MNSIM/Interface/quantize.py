@@ -1,5 +1,4 @@
 #-*-coding:utf-8-*-
-# from _typeshed import Self
 import collections
 import copy
 import math
@@ -360,6 +359,7 @@ class ExpandLayer(nn.Module):
         input_channels = inputs.size(1)
         pcd = (0, 0, 0, 0, 0, self._max_channels - input_channels)
         return nn.functional.pad(inputs, pcd, "constant", 0)
+
 class StraightLayer(nn.Module):
     def __init__(self, hardware_config, layer_config, quantize_config):
         super(StraightLayer, self).__init__()
@@ -400,7 +400,7 @@ class StraightLayer(nn.Module):
         elif self.layer_config['type'] == 'AdaptiveAvgPool2d':
             self.layer=nn.AdaptiveAvgPool2d(layer_config["output_size"])
         elif self.layer_config['type'] == "expand":
-            self.layer=ExpandLayer(layer_config["_max_channels"]) 
+            self.layer=ExpandLayer(layer_config["_max_channels"])
         elif self.layer_config['type'] == 'downsample':
             self.layer=DownSampleLayer()
         elif self.layer_config['type'] == 'flatten':
