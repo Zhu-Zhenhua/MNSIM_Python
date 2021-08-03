@@ -1,5 +1,5 @@
-#-*-coding:utf-8-*-
-'''
+# -*-coding:utf-8-*-
+"""
 @FileName:
     awnas_interface.py
 @Description:
@@ -9,7 +9,7 @@
     Hanbo Sun
 @CreateTime:
     2021/08/03 17:05
-'''
+"""
 # -*-coding:utf-8-*-
 import torch
 from MNSIM.Interface import utils
@@ -21,28 +21,39 @@ class AWNASTrainTestInterface(TrainTestInterface):
     """
     awnas interface
     """
+
     def __init__(
-        self,
-        objective,
-        awnas_layer_list,
-        awnas_param_list,
-        SimConfig_path,
-        extra_define=None,
-        **kwargs
+        self, objective, cand_net, SimConfig_path, extra_define=None, **kwargs
     ):
         # link objective
         self.objective = objective
+        # link cand_net
+        self.cand_net = cand_net
         # load simulation config
-        self.hardware_config, self.xbar_column, self.tile_row, self.tile_column = \
-            utils.load_sim_config(SimConfig_path, extra_define)
+        (
+            self.hardware_config,
+            self.xbar_column,
+            self.tile_row,
+            self.tile_column,
+        ) = utils.load_sim_config(SimConfig_path, extra_define)
         # input awnas layer list and param list
-        hardware_config, layer_config_list, quantize_config_list, input_index_list, input_params = \
-            utils.transfer_awnas_layer_list(awnas_layer_list)
+        (
+            hardware_config,
+            layer_config_list,
+            quantize_config_list,
+            input_index_list,
+            input_params,
+        ) = utils.transfer_awnas_layer_list(cand_net.get_mnsim_cfg())
+        # TODO: use hardware_config searched from awnas to evaluate
         self.net = NetworkGraph(
-            hardware_config, layer_config_list, quantize_config_list, input_index_list, input_params
+            self.hardware_config,
+            layer_config_list,
+            quantize_config_list,
+            input_index_list,
+            input_params,
         )
         # load weights
-        weights = utils.transfer_awnas_state_dict(awnas_layer_list, awnas_param_list)
+        weights = utils.transfer_awnas_state_dict(cand_net)
         self.net.load_change_weights(weights)
 
     def _get_mothod_adc(self):
@@ -76,7 +87,5 @@ class AWNASTrainTestInterface(TrainTestInterface):
         with torch.no_grad():
             net_weights = self.get_net_bits()
             # add variation to net weights
-            outputs = self.net.set_weights_forward(
-                inputs, net_weights, adc_action
-            )
+            outputs = self.net.set_weights_forward(inputs, net_weights, adc_action)
         return outputs
