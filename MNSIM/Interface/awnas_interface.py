@@ -3,9 +3,7 @@ import collections
 import configparser
 import copy
 import math
-import os
 import copy
-import re
 import torch
 
 import torch.nn as nn
@@ -13,31 +11,42 @@ import torch.nn as nn
 import numpy as np
 
 from importlib import import_module
-from MNSIM.Interface import quantize
+
+from MNSIM.Interface.network import NetworkGraph
+from MNSIM.Interface.interface import mysplit
 
 
 class awnas_TrainTestInterface(object):
     def __init__(
         self,
-        network_module,
         dataset_module_name,
         SimConfig_path,
         net,
+        objective_mode,
         _param_list=None,
         device=None,
         extra_define=None,
         test_loader=None,
     ):
-        # network_module = 'lenet'
-        # dataset_module_name = 'cifar10'
-        # _param_list = './zoo/cifar10_lenet_train_params.pth'
-        # load net, dataset, and weights
-        self.network_module = network_module
+
         self.dataset_module_name = dataset_module_name
-        self._param_list = _param_list
         self.test_loader = test_loader
-        # load simconfig
-        ## xbar_size, input_bit, weight_bit, quantize_bit
+        self.set_sim_config(SimConfig_path)
+        self.tile_row = self.tile_size[0]
+        self.tile_column = self.tile_size[1]
+        self.objective_mode = objective_mode
+        # net and weights
+        self.set_device(device)
+        if extra_define != None:
+            self.hardware_config["input_bit"] = extra_define["dac_res"]
+            self.hardware_config["quantize_bit"] = extra_define["adc_res"]
+            self.hardware_config["xbar_size"] = extra_define["xbar_size"]
+        self.net = net
+        if _param_list is not None:
+            state_dict = self.net.get_state_dict(_param_list)
+            self.net.load_change_weights(state_dict)
+
+    def set_sim_config(self, SimConfig_path):
         xbar_config = configparser.ConfigParser()
         xbar_config.read(SimConfig_path, encoding="UTF-8")
         self.hardware_config = collections.OrderedDict()
@@ -88,32 +97,26 @@ class awnas_TrainTestInterface(object):
         )
         self.tile_row = self.tile_size[0]
         self.tile_column = self.tile_size[1]
-        # net and weights
+
+    def set_device(self, device):
         if device != None:
             self.device = torch.device(
-                f"cuda:{device}" if torch.cuda.is_available() else "cpu"
+                f"{device}" if torch.cuda.is_available() else "cpu"
             )
         else:
             self.device = torch.device("cpu")
-        # print(f'run on device {self.device}')
-        if dataset_module_name.endswith("cifar10"):
-            num_classes = 10
-        elif dataset_module_name.endswith("cifar100"):
-            num_classes = 100
+
+    def set_mode(self):
+        self.net.to(self.device)
+        if self.objective_mode.startswith("train"):
+            self.net.train()
+        elif self.objective_mode.startswith("eval"):
+            self.net.eval()
         else:
-            assert 0, f"unknown dataset"
-        if extra_define != None:
-            self.hardware_config["input_bit"] = extra_define["dac_res"]
-            self.hardware_config["quantize_bit"] = extra_define["adc_res"]
-            self.hardware_config["xbar_size"] = extra_define["xbar_size"]
-        self.net = net
-        if _param_list is not None:
-            # 保存下权重
-            self.net.load_change_weights(_param_list)
+            assert "unsupported objective_mode"
 
     def origin_evaluate(self, method="SINGLE_FIX_TEST", adc_action="SCALE"):
-        self.net.to(self.device)
-        self.net.eval()
+        self.set_mode()
         test_correct = 0
         test_total = 0
         with torch.no_grad():
@@ -134,8 +137,7 @@ class awnas_TrainTestInterface(object):
         return net_bit_weights
 
     def set_net_bits_evaluate(self, net_bit_weights, adc_action="SCALE"):
-        self.net.to(self.device)
-        self.net.eval()
+        self.set_mode()
         test_correct = 0
         test_total = 0
         with torch.no_grad():
@@ -290,26 +292,10 @@ class awnas_TrainTestInterface(object):
                             tile_array.append(xbar_array[serial_number])
                 total_array.append((layer_structure_info, tile_array))
             net_array.append(total_array)
-        # test index
-        # graph = map(lambda x: x[0][0],net_array)
-        # graph = list(map(lambda x: f'l: {x["Layerindex"]}, t: {x["type"]}, i: {x["Inputindex"]}, o: {x["Outputindex"]}', graph))
-        # graph = '\n'.join(graph)
         return net_array
 
 
-def mysplit(array, length):
-    # reshape
-    array = np.reshape(array, (array.shape[0], -1))
-    # split on output
-    assert array.shape[0] > 0
-    tmp_index = []
-    for i in range(1, array.shape[0]):
-        if i % length == 0:
-            tmp_index.append(i)
-    return np.split(array, tmp_index, axis=0)
-
-
-class awnas_NetworkGraph(nn.Module):
+class awnas_NetworkGraph(NetworkGraph):
     def __init__(
         self,
         hardware_config,
@@ -318,144 +304,15 @@ class awnas_NetworkGraph(nn.Module):
         input_index_list,
         input_params,
     ):
-        super(awnas_NetworkGraph, self).__init__()
-        # same length for layer_config_list , quantize_config_list and input_index_list
-        assert len(layer_config_list) == len(quantize_config_list)
-        assert len(layer_config_list) == len(input_index_list)
-        # layer list
-        self.layer_list = nn.ModuleList()
-        # add layer to layer list by layer_config, quantize_config, and input_index
-        for layer_config, quantize_config in zip(
-            layer_config_list, quantize_config_list
-        ):
-            assert "type" in layer_config.keys()
-            if layer_config["type"] in quantize.QuantizeLayerStr:
-                layer = quantize.QuantizeLayer(
-                    hardware_config, layer_config, quantize_config
-                )
-            elif layer_config["type"] in quantize.StraightLayerStr:
-                layer = quantize.StraightLayer(
-                    hardware_config, layer_config, quantize_config
-                )
-            else:
-                assert 0, f'not support {layer_config["type"]}'
-            self.layer_list.append(layer)
-        # save input_index_list, input_index is a list
-        self.input_index_list = copy.deepcopy(input_index_list)
-        self.input_params = copy.deepcopy(input_params)
+        super(awnas_NetworkGraph, self).__init__(
+            hardware_config,
+            layer_config_list,
+            quantize_config_list,
+            input_index_list,
+            input_params,
+        )
 
-    def forward(self, x, method="SINGLE_FIX_TEST", adc_action="SCALE"):
-        # input fix information
-        quantize.last_activation_scale = self.input_params["activation_scale"]
-        quantize.last_activation_bit = self.input_params["activation_bit"]
-        # forward
-        tensor_list = [x]
-        for i, layer in enumerate(self.layer_list):
-            # find the input tensor
-            input_index = self.input_index_list[i]
-            assert len(input_index) in [1, 2]
-            if len(input_index) == 1:
-                tensor_list.append(
-                    layer.forward(
-                        tensor_list[input_index[0] + i + 1], method, adc_action
-                    )
-                )
-            else:
-                tensor_list.append(
-                    layer.forward(
-                        [
-                            tensor_list[input_index[0] + i + 1],
-                            tensor_list[input_index[1] + i + 1],
-                        ],
-                        method,
-                        adc_action,
-                    )
-                )
-            if i == (len(self.layer_list) - 3):
-                print("yaotule")
-        return tensor_list[-1]
-
-    def get_weights(self):
-        net_bit_weights = []
-        for layer in self.layer_list:
-            net_bit_weights.append(layer.get_bit_weights())
-        return net_bit_weights
-
-    def set_weights_forward(self, x, net_bit_weights, adc_action="SCALE"):
-        # input fix information
-        quantize.last_activation_scale = self.input_params["activation_scale"]
-        quantize.last_activation_bit = self.input_params["activation_bit"]
-        # filter None
-        net_bit_weights = list(filter(lambda x: x != None, net_bit_weights))
-        # forward
-        tensor_list = [x]
-        count = 0
-        for i, layer in enumerate(self.layer_list):
-            # find the input tensor
-            input_index = self.input_index_list[i]
-            assert len(input_index) in [1, 2]
-            if isinstance(layer, quantize.QuantizeLayer):
-                tensor_list.append(
-                    layer.set_weights_forward(
-                        tensor_list[input_index[0] + i + 1],
-                        net_bit_weights[count],
-                        adc_action,
-                    )
-                )
-                # tensor_list.append(layer.forward(tensor_list[input_index[0] + i + 1], 'SINGLE_FIX_TEST', adc_action))
-                count = count + 1
-            else:
-                if len(input_index) == 1:
-                    tensor_list.append(
-                        layer.forward(
-                            tensor_list[input_index[0] + i + 1], "FIX_TRAIN", None
-                        )
-                    )
-                else:
-                    tensor_list.append(
-                        layer.forward(
-                            [
-                                tensor_list[input_index[0] + i + 1],
-                                tensor_list[input_index[1] + i + 1],
-                            ],
-                            "FIX_TRAIN",
-                            None,
-                        )
-                    )
-        return tensor_list[-1]
-
-    def get_structure(self):
-        # forward structure
-        x = torch.zeros(self.input_params["input_shape"])
-        self.to(x.device)
-        self.eval()
-        tensor_list = [x]
-        for i, layer in enumerate(self.layer_list):
-            # find the input tensor
-            input_index = self.input_index_list[i]
-            assert len(input_index) in [1, 2]
-            if len(input_index) == 1:
-                tensor_list.append(
-                    layer.structure_forward(tensor_list[input_index[0] + i + 1])
-                )
-            else:
-                tensor_list.append(
-                    layer.structure_forward(
-                        [
-                            tensor_list[input_index[0] + i + 1],
-                            tensor_list[input_index[1] + i + 1],
-                        ],
-                    )
-                )
-        # structure information, stored as list
-        net_info = []
-        for layer in self.layer_list:
-            net_info.append(layer.layer_info)
-        return net_info
-
-    def load_change_weights(self, _param_list):
-        # input is a state dict, weights
-        # concat all layer_list weights
+    def get_state_dict(self, _param_list):
         state_dict = collections.OrderedDict()
         for i in range(len(_param_list)):
             if (
@@ -482,49 +339,4 @@ class awnas_NetworkGraph(nn.Module):
                     "running_var"
                 ]
             state_dict[f"layer_list.{i}.last_value"] = _param_list[i]["last_value"]
-
-        keys_map = collections.OrderedDict()
-        for key in state_dict.keys():
-            tmp_key = re.sub("\.layer_list\.\d+\.weight$", "", key)
-            if tmp_key not in keys_map.keys():
-                keys_map[tmp_key] = [key]
-            else:
-                keys_map[tmp_key].append(key)
-        # concat and split
-        tmp_state_dict = collections.OrderedDict()
-        for tmp_key, key_list in keys_map.items():
-            if len(key_list) == 1 and tmp_key == key_list[0]:
-                tmp_state_dict[tmp_key] = state_dict[key_list[0]]
-            else:
-                # get layer info
-                layer_config = None
-                hardware_config = None
-                for i in range(len(self.layer_list)):
-                    name = f"layer_list.{i}"
-                    if name == tmp_key:
-                        layer_config = self.layer_list[i].layer_config
-                        hardware_config = self.layer_list[i].hardware_config
-                assert layer_config, "layer must have layer config"
-                assert hardware_config, "layer must have hardware config"
-                # concat weights
-                if layer_config["type"] != "bn":
-                    total_weights = torch.cat(
-                        [state_dict[key] for key in key_list], dim=1
-                    )
-                    # total_weights=state_dict[key_list[0]]
-                    # split weights
-
-                    if layer_config["type"] == "conv":
-                        split_len = hardware_config["xbar_size"] // (
-                            layer_config["kernel_size"] ** 2
-                        )
-                    elif layer_config["type"] == "fc":
-                        split_len = hardware_config["xbar_size"]
-                    else:
-                        assert 0, f'not support {layer_config["type"]}'
-                    weights_list = torch.split(total_weights, split_len, dim=1)
-                    # load weights
-                for i, weights in enumerate(weights_list):
-                    tmp_state_dict[tmp_key + f".layer_list.{i}.weight"] = weights
-        # load weights
-        self.load_state_dict(tmp_state_dict)
+        return state_dict
