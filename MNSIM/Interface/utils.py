@@ -98,82 +98,66 @@ def transfer_awnas_state_dict(cand_net):
     param_list = list()
     param_list = cand_net.weights_manager._param_list
     # stage1: extract param_list from cand_net,add the missing to param_list
-    for i in range(len(param_list)):
-        param_list[i].update(
+    assert len(param_list) == len(mnsim_cfg)
+    for param,cfg in zip(param_list,mnsim_cfg):
+        param.update(
             {
                 "last_value": torch.FloatTensor(
                     [
-                        mnsim_cfg[i]["output"][1]
-                        if mnsim_cfg[i]["output"][1] is not None
+                        cfg["output"][0][1]
+                        if cfg["output"][0][1] is not None
                         else 1
                     ]
                 )
             }
         )
-        if mnsim_cfg[i]["_type"] == "conv" or mnsim_cfg[i]["_type"] == "fc":
-            if "weight_info" in mnsim_cfg[i].keys():
-                param_list[i].update(
-                    {
-                        "bit_scale_list": torch.FloatTensor(
+        if cfg["_type"] == "conv" or cfg["_type"] == "fc": 
+            assert len(cfg['input']) == 1 and len(cfg['output']) == 1          
+            param.update(
+                {
+                    "bit_scale_list": torch.FloatTensor(
+                        [
                             [
-                                [
-                                    mnsim_cfg[i]["input"][0],
-                                    mnsim_cfg[i]["input"][1] / (2 ** (mnsim_cfg[i]["input"][0] - 1) - 1),
-                                ],
-                                [
-                                    mnsim_cfg[i]["weight_info"]["bit"],
-                                    mnsim_cfg[i]["weight_info"]["scale"] / (2 ** (mnsim_cfg[i]["weight_info"]["bit"] - 1) - 1),
-                                ],
-                                [
-                                    mnsim_cfg[i]["output"][0],
-                                    mnsim_cfg[i]["output"][1] / (2 ** (mnsim_cfg[i]["output"][0] - 1) - 1),
-                                ],
-                            ]
-                        )
-                    }
-                )
-            else:
-                param_list[i].update(
-                    {
-                        "bit_scale_list": torch.FloatTensor(
+                                cfg["input"][0][0],
+                                cfg["input"][0][1] / (2 ** (cfg["input"][0][0] - 1) - 1),
+                            ],
                             [
-                                [
-                                    mnsim_cfg[i]["input"][0],
-                                    mnsim_cfg[i]["input"][1] / (2 ** (mnsim_cfg[i]["input"][0] - 1) - 1),
-                                ],
-                                [None, None],
-                                [
-                                    mnsim_cfg[i]["output"][0],
-                                    mnsim_cfg[i]["output"][1] / (2 ** (mnsim_cfg[i]["output"][0] - 1) - 1),
-                                ],
-                            ]
-                        )
-                    }
-                )
+                                cfg["weight_info"]["bit"] if "weight_info" in cfg.keys() else None,
+                                cfg["weight_info"]["scale"] / (2 ** (cfg["weight_info"]["bit"] - 1) - 1) if "weight_info" in cfg.keys() else None,
+                            ],
+                            [
+                                cfg["output"][0][0],
+                                cfg["output"][0][1] / (2 ** (cfg["output"][0][0] - 1) - 1),
+                            ],
+                        ]
+                    )
+                }
+            )
     # state2: transfer keys of param_list into mnsim acceptable keys
     state_dict = collections.OrderedDict()
-    for i in range(len(param_list)):
-        if mnsim_cfg[i]["_type"] == "fc" or mnsim_cfg[i]["_type"] == "conv":
-            state_dict[f"layer_list.{i}.bit_scale_list"] = param_list[i][
+    assert len(param_list) == len(mnsim_cfg)
+    for i,(param,cfg) in enumerate(zip(param_list,mnsim_cfg)):
+        if cfg["_type"] == "fc" or cfg["_type"] == "conv":
+            state_dict[f"layer_list.{i}.bit_scale_list"] = param[
                 "bit_scale_list"
             ]
-            if "bias" in param_list[i].keys():
-                param_list[i].pop("bias")
-            if "weight" in param_list[i].keys():
-                state_dict[f"layer_list.{i}.layer_list.{i}.weight"] = param_list[i][
+            if "bias" in param.keys():
+                param.pop("bias")
+            if "weight" in param.keys():
+                state_dict[f"layer_list.{i}.layer_list.{i}.weight"] = param[
                     "weight"
                 ]
         # if self.layer_con
         if mnsim_cfg[i]["_type"] == "bn":
-            state_dict[f"layer_list.{i}.layer.weight"] = param_list[i]["weight"]
-            state_dict[f"layer_list.{i}.layer.bias"] = param_list[i]["bias"]
-            state_dict[f"layer_list.{i}.layer.running_mean"] = param_list[i][
+            state_dict[f"layer_list.{i}.layer.weight"] = param["weight"]
+            state_dict[f"layer_list.{i}.layer.bias"] = param["bias"]
+            state_dict[f"layer_list.{i}.layer.running_mean"] = param[
                 "running_mean"
             ]
-            state_dict[f"layer_list.{i}.layer.running_var"] = param_list[i][
+            state_dict[f"layer_list.{i}.layer.running_var"] = param[
                 "running_var"
             ]
-        state_dict[f"layer_list.{i}.last_value"] = param_list[i]["last_value"]
+        state_dict[f"layer_list.{i}.last_value"] = param["last_value"]
     return state_dict
 
 
@@ -189,13 +173,13 @@ def transfer_awnas_layer_list(mnsim_cfg):
     layer_config_list = transfer_layer_config_list(mnsim_cfg)
     # transfer quantize_config_list
     quantize_config_list = list()
-    for i in range(len(mnsim_cfg)):
+    for i,cfg in enumerate(mnsim_cfg):
         quantize_config_list.append(
             {
-                "weight_bit": mnsim_cfg[i]["weight_info"]["bit"]
-                if "weight_info" in mnsim_cfg[i].keys()
+                "weight_bit": cfg["weight_info"]["bit"]
+                if "weight_info" in cfg.keys()
                 else None,
-                "activation_bit": mnsim_cfg[i]["output"][0],
+                "activation_bit": cfg["output"][0][0],
                 "point_shift": -2,
             }
         )
@@ -203,16 +187,16 @@ def transfer_awnas_layer_list(mnsim_cfg):
     input_params = OrderedDict()
     if mnsim_cfg[0]["input"][0] is not None and mnsim_cfg[0]["input"][0] is not None:
         input_params = {
-            "activation_scale": mnsim_cfg[0]["input"][1]
-            / (2 ** (mnsim_cfg[0]["input"][0] - 1) - 1),
-            "activation_bit": mnsim_cfg[0]["input"][0],
+            "activation_scale": mnsim_cfg[0]["input"][0][1]
+            / (2 ** (mnsim_cfg[0]["input"][0][0] - 1) - 1),
+            "activation_bit": mnsim_cfg[0]["input"][0][0],
             "input_shape": (1, 3, 32, 32),
         }
     # transfer input_index_list
     input_index_list = list()
-    for i in range(len(layer_config_list)):
-        if "input_index" in layer_config_list[i]:
-            input_index_list.append(layer_config_list[i]["input_index"])
+    for _,layer_config in enumerate(layer_config_list):
+        if "input_index" in layer_config:
+            input_index_list.append(layer_config["input_index"])
         else:
             input_index_list.append([-1])
     # transfer hardware_config TODO
@@ -233,53 +217,53 @@ def transfer_layer_config_list(mnsim_cfg):
     output: layer_config_list
     """
     layer_config_list = list()
-    for i in range(len(mnsim_cfg)):
-        if mnsim_cfg[i]["_type"] == "conv":
+    for _,cfg in enumerate(mnsim_cfg):
+        if cfg["_type"] == "conv":
             layer_config_list.append(OrderedDict())
             layer_config_list[-1]["type"] = "conv"
-            layer_config_list[-1]["in_channels"] = mnsim_cfg[i]["in_channels"]
-            layer_config_list[-1]["out_channels"] = mnsim_cfg[i]["out_channels"]
-            layer_config_list[-1]["kernel_size"] = mnsim_cfg[i]["kernel_size"]
-            layer_config_list[-1]["stride"] = mnsim_cfg[i]["stride"]
-            layer_config_list[-1]["padding"] = mnsim_cfg[i]["padding"]
-        elif mnsim_cfg[i]["_type"] == "bn":
+            layer_config_list[-1]["in_channels"] = cfg["in_channels"]
+            layer_config_list[-1]["out_channels"] = cfg["out_channels"]
+            layer_config_list[-1]["kernel_size"] = cfg["kernel_size"]
+            layer_config_list[-1]["stride"] = cfg["stride"]
+            layer_config_list[-1]["padding"] = cfg["padding"]
+        elif cfg["_type"] == "bn":
             layer_config_list.append(OrderedDict())
             layer_config_list[-1]["type"] = "bn"
-            layer_config_list[-1]["features"] = mnsim_cfg[i]["features"]
-        elif mnsim_cfg[i]["_type"] == "fc":
+            layer_config_list[-1]["features"] = cfg["features"]
+        elif cfg["_type"] == "fc":
             layer_config_list.append(OrderedDict())
             layer_config_list[-1]["type"] = "fc"
-            layer_config_list[-1]["out_features"] = mnsim_cfg[i]["out_features"]
-            layer_config_list[-1]["in_features"] = mnsim_cfg[i]["in_features"]
-        elif mnsim_cfg[i]["_type"] == "relu":
+            layer_config_list[-1]["out_features"] = cfg["out_features"]
+            layer_config_list[-1]["in_features"] = cfg["in_features"]
+        elif cfg["_type"] == "relu":
             layer_config_list.append(OrderedDict())
             layer_config_list[-1]["type"] = "relu"
-        elif mnsim_cfg[i]["_type"] == "element_sum":
+        elif cfg["_type"] == "element_sum":
             layer_config_list.append(OrderedDict())
             layer_config_list[-1]["type"] = "element_sum"
-        elif mnsim_cfg[i]["_type"] == "AdaptiveAvgPool2d":
+        elif cfg["_type"] == "AdaptiveAvgPool2d":
             layer_config_list.append(OrderedDict())
             layer_config_list[-1]["type"] = "AdaptiveAvgPool2d"
             layer_config_list[-1]["mode"] = "AVE"
-            layer_config_list[-1]["output_size"] = mnsim_cfg[i]["output_size"]
-        elif mnsim_cfg[i]["_type"] == "flatten":
+            layer_config_list[-1]["output_size"] = cfg["output_size"]
+        elif cfg["_type"] == "flatten":
             layer_config_list.append(OrderedDict())
             layer_config_list[-1]["type"] = "flatten"
-            layer_config_list[-1]["start_dim"] = mnsim_cfg[i]["start_dim"]
-            layer_config_list[-1]["end_dim"] = mnsim_cfg[i]["end_dim"]
-        elif mnsim_cfg[i]["_type"] == "expand":
+            layer_config_list[-1]["start_dim"] = cfg["start_dim"]
+            layer_config_list[-1]["end_dim"] = cfg["end_dim"]
+        elif cfg["_type"] == "expand":
             layer_config_list.append(OrderedDict())
             layer_config_list[-1]["type"] = "expand"
-            layer_config_list[-1]["_max_channels"] = mnsim_cfg[i]["_max_channels"]
-        elif mnsim_cfg[i]["_type"] == "downsample":
+            layer_config_list[-1]["_max_channels"] =cfg["_max_channels"]
+        elif cfg["_type"] == "downsample":
             layer_config_list.append(OrderedDict())
             layer_config_list[-1]["type"] = "downsample"
         else:
-            assert 0, "not support type {}".format(mnsim_cfg[i]["_type"])
+            assert 0, "not support type {}".format(cfg["_type"])
         #transfer input_index
         layer_config_list[-1]["input_index"] = list()
-        for _, from_pos in enumerate(mnsim_cfg[i]["from"]):
+        for _, from_pos in enumerate(cfg["from"]):
             layer_config_list[-1]["input_index"].append(
-                from_pos - mnsim_cfg[i]["to"][0]
+                from_pos - cfg["to"][0]
             )
     return layer_config_list
