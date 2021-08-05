@@ -413,6 +413,13 @@ class StraightLayer(nn.Module):
         self.register_buffer('last_value', torch.ones(1))
         # self.last_value[0] = 1
         self.layer_info = None
+        if "quantize_flag" in layer_config.keys():
+            self.quantize_flag = layer_config["quantize_flag"]
+        else:
+            if layer_config["type"] == "bn":
+                self.quantize_config = True
+            else:
+                self.quantize_config = False
     def structure_forward(self, input):
         if self.layer_config['type'] != 'element_sum':
             # generate input shape and output shape
@@ -439,14 +446,16 @@ class StraightLayer(nn.Module):
                 self.layer_info['features'] = self.layer_config['features']
             elif self.layer_config['type'] == 'dropout':
                 self.layer_info['type'] = 'dropout'
+            elif self.layer_config['type'] == 'AdaptiveAvgPool2d':
+                self.layer_info['type'] = 'AdaptiveAvgPool2d'
+            elif self.layer_config['type'] == 'flatten':
+                self.layer_info['type'] == 'flatten'
+            elif self.layer_config['type'] == 'hard_tanh':
+                self.layer_info['type'] == 'hard_tanh'
             elif self.layer_config['type']=='expand':
                 self.layer_info['type']='expand'
-            elif self.layer_config['type']=='AdaptiveAvgPool2d':
-                self.layer_info['type']='AdaptiveAvgPool2d'
             elif self.layer_config["type"] == "downsample":
-                self.layer_config["type"] = 'downsample'
-            elif self.layer_config['type'] == 'flatten':
-                self.layer_config['type'] == 'flatten'
+                self.layer_info["type"] = 'downsample'
             else:
                 assert 0, f'not support {self.layer_config["type"]}'
         else:
@@ -475,7 +484,7 @@ class StraightLayer(nn.Module):
         # fix training and single fix test
         if METHOD == 'FIX_TRAIN' or METHOD == 'SINGLE_FIX_TEST':
             output = self.layer(input)
-            if self.layer_config['type'] == 'bn':
+            if self.quantize_flag:
                 output = Quantize(output, self.quantize_config['activation_bit'], 'activation', self.last_value, self.training)
             return output
         assert 0, f'not support {METHOD}'

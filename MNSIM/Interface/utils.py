@@ -94,72 +94,62 @@ def transfer_awnas_state_dict(cand_net):
     inputs: cand_net
     output: MNSIM.NetGraph.state_dict
     """
-    mnsim_cfg = cand_net.get_mnsim_cfg()
-    param_list = list()
+    mnsim_cfg = cand_net.get_mnsim_cfg(preserve_scale_flag=True)
     param_list = cand_net.weights_manager._param_list
-    # stage1: extract param_list from cand_net,add the missing to param_list
-    assert len(param_list) == len(mnsim_cfg)
-    for param,cfg in zip(param_list,mnsim_cfg):
-        param.update(
-            {
-                "last_value": torch.FloatTensor(
-                    [
-                        cfg["output"][0][1]
-                        if cfg["output"][0][1] is not None
-                        else 1
-                    ]
-                )
-            }
-        )
+    # stage1: extract param_list from cand_net, add the missing to param_list
+    assert len(param_list) == len(mnsim_cfg), \
+        "param_list and mnsim_cfg should have the same length"
+    for param, cfg in zip(param_list, mnsim_cfg):
+        assert len(cfg["output"]) == 1, \
+            "ONLY support one output layer"
+        if len(cfg["output"][0]) == 2:
+            last_value = 1.
+        else:
+            assert len(cfg["output"][0]) == 3, \
+                "output can be in length 2 or 3"
+            if cfg["output"][0][1] == float('nan') or \
+                cfg["output"][0][1] is float('nan') or \
+                cfg["output"][0][1] is None:
+                last_value = 1.
+            else:
+                last_value = cfg["output"][0][1]
+        param.update({
+            "last_value": torch.Tensor([last_value])
+        })
         if cfg["_type"] == "conv" or cfg["_type"] == "fc":
             assert len(cfg['input']) == 1 and len(cfg['output']) == 1
-            param.update(
-                {
-                    "bit_scale_list": torch.FloatTensor(
-                        [
-                            [
-                                cfg["input"][0][0],
-                                cfg["input"][0][1] / (2 ** (cfg["input"][0][0] - 1) - 1),
-                            ],
-                            [
-                                cfg["weight_info"]["bit"] if "weight_info" in cfg.keys() else None,
-                                cfg["weight_info"]["scale"] / (2 ** (cfg["weight_info"]["bit"] - 1) - 1) if "weight_info" in cfg.keys() else None,
-                            ],
-                            [
-                                cfg["output"][0][0],
-                                cfg["output"][0][1] / (2 ** (cfg["output"][0][0] - 1) - 1),
-                            ],
-                        ]
-                    )
-                }
-            )
+            assert "weight_info" in cfg.keys()
+            bit_scale_list = []
+            bit_scale_list.append([
+                cfg["input"][0][0],
+                cfg["input"][0][1] / (2 ** (cfg["input"][0][0] - 1) - 1),
+            ])
+            bit_scale_list.append([
+                cfg["weight_info"]["bit"],
+                cfg["weight_info"]["scale"] / (2 ** (cfg["weight_info"]["bit"] - 1) - 1),
+            ])
+            bit_scale_list.append([
+                cfg["output"][0][0],
+                cfg["output"][0][1] / (2 ** (cfg["output"][0][0] - 1) - 1),
+            ])
+            param.update({
+                "bit_scale_list": torch.Tensor(bit_scale_list)
+            })
     # state2: transfer keys of param_list into mnsim acceptable keys
     state_dict = collections.OrderedDict()
     assert len(param_list) == len(mnsim_cfg)
-    for i,(param,cfg) in enumerate(zip(param_list,mnsim_cfg)):
+    for i, (param, cfg) in enumerate(zip(param_list, mnsim_cfg)):
         if cfg["_type"] == "fc" or cfg["_type"] == "conv":
-            state_dict[f"layer_list.{i}.bit_scale_list"] = param[
-                "bit_scale_list"
-            ]
-            if "bias" in param.keys():
-                param.pop("bias")
-            if "weight" in param.keys():
-                state_dict[f"layer_list.{i}.layer_list.{i}.weight"] = param[
-                    "weight"
-                ]
+            state_dict[f"layer_list.{i}.bit_scale_list"] = param["bit_scale_list"]
+            state_dict[f"layer_list.{i}.layer_list.{i}.weight"] = param["weight"]
         # if self.layer_con
         if mnsim_cfg[i]["_type"] == "bn":
             state_dict[f"layer_list.{i}.layer.weight"] = param["weight"]
             state_dict[f"layer_list.{i}.layer.bias"] = param["bias"]
-            state_dict[f"layer_list.{i}.layer.running_mean"] = param[
-                "running_mean"
-            ]
-            state_dict[f"layer_list.{i}.layer.running_var"] = param[
-                "running_var"
-            ]
+            state_dict[f"layer_list.{i}.layer.running_mean"] = param["running_mean"]
+            state_dict[f"layer_list.{i}.layer.running_var"] = param["running_var"]
         state_dict[f"layer_list.{i}.last_value"] = param["last_value"]
     return state_dict
-
 
 def transfer_awnas_layer_list(mnsim_cfg):
     """
@@ -271,4 +261,21 @@ def transfer_layer_config_list(mnsim_cfg):
             layer_config_list[-1]["input_index"].append(
                 from_pos - cfg["to"][0]
             )
+        # append for StraightLayer quantize
+        # check the output scale is all the same input scale
+        assert len(cfg["output"]) == 1
+        assert len(cfg["output"][0]) == 3
+        for input_info in cfg["input"]:
+            assert len(input_info) == 3, \
+                "output should be 1, and all input, output should have 3 item"
+        output_scale = cfg["output"][0][1]
+        quantize_flag = False
+        for input_info in cfg["input"]:
+            input_scale = input_info[1]
+            if input_scale == output_scale \
+                or input_scale is output_scale:
+                continue
+            else:
+                quantize_flag = True
+        layer_config_list[-1]["quantize_flag"] = quantize_flag
     return layer_config_list
