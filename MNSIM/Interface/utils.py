@@ -111,8 +111,8 @@ def transfer_awnas_state_dict(cand_net):
                 )
             }
         )
-        if cfg["_type"] == "conv" or cfg["_type"] == "fc": 
-            assert len(cfg['input']) == 1 and len(cfg['output']) == 1          
+        if cfg["_type"] == "conv" or cfg["_type"] == "fc":
+            assert len(cfg['input']) == 1 and len(cfg['output']) == 1
             param.update(
                 {
                     "bit_scale_list": torch.FloatTensor(
@@ -166,43 +166,43 @@ def transfer_awnas_layer_list(mnsim_cfg):
     transfer awnas layer list to MNSIM.NetGraph layer_config_list
     inputs: mnsim_cfg
     outputs: MNSIM.NetGraph inputs:
-        contain: hardware_config, layer_config_list, quantize_config_list, input_index_list,
+        contain: layer_config_list, quantize_config_list, input_index_list,
             and input_params
     """
     # transfer layer_config_list
     layer_config_list = transfer_layer_config_list(mnsim_cfg)
     # transfer quantize_config_list
     quantize_config_list = list()
-    for i,cfg in enumerate(mnsim_cfg):
-        quantize_config_list.append(
-            {
-                "weight_bit": cfg["weight_info"]["bit"]
-                if "weight_info" in cfg.keys()
+    for _, cfg in enumerate(mnsim_cfg):
+        assert len(cfg["output"]) == 1, \
+            "ONLY support one output layer"
+        quantize_config_list.append({
+            "weight_bit": cfg["weight_info"]["bit"] \
+                if "weight_info" in cfg.keys() \
                 else None,
-                "activation_bit": cfg["output"][0][0],
-                "point_shift": -2,
-            }
-        )
+            "activation_bit": cfg["output"][0][0],
+            "point_shift": -2,
+        })
     # transfer input_params
-    input_params = OrderedDict()
-    if mnsim_cfg[0]["input"][0] is not None and mnsim_cfg[0]["input"][0] is not None:
-        input_params = {
-            "activation_scale": mnsim_cfg[0]["input"][0][1]
+    assert mnsim_cfg[0]["input"][0] is not None and \
+        mnsim_cfg[0]["input"][0][0] is not None and \
+        mnsim_cfg[0]["input"][0][1] is not float('nan'), \
+        "There should be one quantize layer be first in super net"
+    # input shape, 1 be the batch
+    input_params = {
+        "activation_scale": mnsim_cfg[0]["input"][0][1] \
             / (2 ** (mnsim_cfg[0]["input"][0][0] - 1) - 1),
-            "activation_bit": mnsim_cfg[0]["input"][0][0],
-            "input_shape": (1, 3, 32, 32),
-        }
+        "activation_bit": mnsim_cfg[0]["input"][0][0],
+        "input_shape": [1] + mnsim_cfg[0]["input"][0][2],
+    }
     # transfer input_index_list
     input_index_list = list()
-    for _,layer_config in enumerate(layer_config_list):
+    for _, layer_config in enumerate(layer_config_list):
         if "input_index" in layer_config:
             input_index_list.append(layer_config["input_index"])
         else:
             input_index_list.append([-1])
-    # transfer hardware_config TODO
-    hardware_config = None
     return (
-        hardware_config,
         layer_config_list,
         quantize_config_list,
         input_index_list,
@@ -217,9 +217,9 @@ def transfer_layer_config_list(mnsim_cfg):
     output: layer_config_list
     """
     layer_config_list = list()
-    for _,cfg in enumerate(mnsim_cfg):
+    for _, cfg in enumerate(mnsim_cfg):
+        layer_config_list.append(OrderedDict())
         if cfg["_type"] == "conv":
-            layer_config_list.append(OrderedDict())
             layer_config_list[-1]["type"] = "conv"
             layer_config_list[-1]["in_channels"] = cfg["in_channels"]
             layer_config_list[-1]["out_channels"] = cfg["out_channels"]
@@ -227,39 +227,44 @@ def transfer_layer_config_list(mnsim_cfg):
             layer_config_list[-1]["stride"] = cfg["stride"]
             layer_config_list[-1]["padding"] = cfg["padding"]
         elif cfg["_type"] == "bn":
-            layer_config_list.append(OrderedDict())
             layer_config_list[-1]["type"] = "bn"
             layer_config_list[-1]["features"] = cfg["features"]
         elif cfg["_type"] == "fc":
-            layer_config_list.append(OrderedDict())
             layer_config_list[-1]["type"] = "fc"
             layer_config_list[-1]["out_features"] = cfg["out_features"]
             layer_config_list[-1]["in_features"] = cfg["in_features"]
-        elif cfg["_type"] == "relu":
-            layer_config_list.append(OrderedDict())
-            layer_config_list[-1]["type"] = "relu"
-        elif cfg["_type"] == "element_sum":
-            layer_config_list.append(OrderedDict())
-            layer_config_list[-1]["type"] = "element_sum"
         elif cfg["_type"] == "AdaptiveAvgPool2d":
-            layer_config_list.append(OrderedDict())
-            layer_config_list[-1]["type"] = "AdaptiveAvgPool2d"
-            layer_config_list[-1]["mode"] = "AVE"
-            layer_config_list[-1]["output_size"] = cfg["output_size"]
+            layer_config_list[-1]["type"] = "pooling"
+            assert cfg["input_size"][0] % cfg["output_size"][0] == 0
+            assert cfg["input_size"][1] % cfg["output_size"][1] == 0
+            assert cfg["input_size"][0] // cfg["output_size"][0] == \
+                cfg["input_size"][1] // cfg["output_size"][1], \
+                "kernel_size should be the same along height and width"
+            layer_config_list[-1]["mode"] = cfg["mode"]
+            layer_config_list[-1]["kernel_size"] = \
+                cfg["input_size"][0] // cfg["output_size"][0]
+            layer_config_list[-1]["stride"] = layer_config_list[-1]["kernel_size"]
         elif cfg["_type"] == "flatten":
-            layer_config_list.append(OrderedDict())
             layer_config_list[-1]["type"] = "flatten"
             layer_config_list[-1]["start_dim"] = cfg["start_dim"]
             layer_config_list[-1]["end_dim"] = cfg["end_dim"]
+        elif cfg["_type"] == "hard_tanh":
+            layer_config_list[-1]["type"] = "hard_tanh"
+        elif cfg["_type"] == "element_sum":
+            layer_config_list[-1]["type"] = "element_sum"
         elif cfg["_type"] == "expand":
-            layer_config_list.append(OrderedDict())
             layer_config_list[-1]["type"] = "expand"
-            layer_config_list[-1]["_max_channels"] =cfg["_max_channels"]
+            layer_config_list[-1]["max_channels"] =cfg["max_channels"]
         elif cfg["_type"] == "downsample":
-            layer_config_list.append(OrderedDict())
             layer_config_list[-1]["type"] = "downsample"
+        elif cfg["_type"] == "quantize":
+            raise Exception(
+                "NOT support quantize layer in MNSIM"
+            )
         else:
-            assert 0, "not support type {}".format(cfg["_type"])
+            raise Exception(
+                "NOT support type {}".format(cfg["_type"])
+            )
         #transfer input_index
         layer_config_list[-1]["input_index"] = list()
         for _, from_pos in enumerate(cfg["from"]):
