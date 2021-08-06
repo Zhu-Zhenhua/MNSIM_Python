@@ -56,7 +56,7 @@ class AWNASTrainTestInterface(TrainTestInterface):
         self.net.load_change_weights(weights)
 
     def _get_mothod_adc(self):
-        return "TRADITION", "SCALE"
+        return "FIX_TRAIN", "SCALE"
 
     def _get_objective_mode(self, inputs):
         # set net device to inputs device

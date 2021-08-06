@@ -20,6 +20,9 @@ from copy import deepcopy
 from collections import OrderedDict
 import torch
 
+# add quantize_input_flag in input_params
+# add quantize_flag in StraightLayer
+# add bypass_quantize_weight in conv and fc layers
 
 def load_sim_config(SimConfig_path, extra_define):
     """
@@ -185,6 +188,10 @@ def transfer_awnas_layer_list(mnsim_cfg):
         "activation_bit": mnsim_cfg[0]["input"][0][0],
         "input_shape": [1] + mnsim_cfg[0]["input"][0][2],
     }
+    # add for quantize input
+    input_params.update({
+        "quantize_input_flag": True
+    })
     # transfer input_index_list
     input_index_list = list()
     for _, layer_config in enumerate(layer_config_list):
@@ -277,5 +284,11 @@ def transfer_layer_config_list(mnsim_cfg):
                 continue
             else:
                 quantize_flag = True
-        layer_config_list[-1]["quantize_flag"] = quantize_flag
+        if cfg["_type"] in ["conv", "fc"]:
+            # append for QuantizeLayer to pass quantizing weights
+            # since weights are already quantized
+            layer_config_list[-1]["bypass_quantize_weight"] = True
+        else:
+            # StraightLayer for quantize output
+            layer_config_list[-1]["quantize_flag"] = quantize_flag
     return layer_config_list
