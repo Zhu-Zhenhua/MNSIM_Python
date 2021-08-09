@@ -249,10 +249,10 @@ class TCG():
             tmp_tileinfo = collections.OrderedDict()
             layer_type = layer_dict['type']
             if self.xbar_polarity == 1:
-                weight_precision = int(layer_dict['Weightbit'])
+                weight_precision = int(layer_dict['Weightbit']) if layer_dict['Weightbit'] is not None else None
             else:
                 assert self.xbar_polarity == 2, "Crossbar polarity must be 1 or 2"
-                weight_precision = int(layer_dict['Weightbit']) - 1
+                weight_precision = int(layer_dict['Weightbit']) - 1 if layer_dict['Weightbit'] is not None else None
             tmp_tileinfo['startid'] = start_tileid
             input_size = 0
             inputchannel = 0

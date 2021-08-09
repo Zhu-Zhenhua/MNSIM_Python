@@ -361,6 +361,12 @@ class DownSampleLayer(nn.Module):
             x, scale_factor=0.5, mode="area", recompute_scale_factor=True
         )
 
+class HardTanhLayer(nn.Module):
+    def __init__(self):
+        super(HardTanhLayer,self).__init__()
+    def forward(self,x):
+        return nn.functional.hardtanh(x)
+
 class ExpandLayer(nn.Module):
     def __init__(self,_max_channels):
         super(ExpandLayer,self).__init__()
@@ -466,6 +472,10 @@ class StraightLayer(nn.Module):
                 self.layer_info['type']='expand'
             elif self.layer_config["type"] == "downsample":
                 self.layer_info["type"] = 'downsample'
+            elif self.layer_config['type'] == 'flatten':
+                self.layer_info['type'] = 'flatten'
+            elif self.layer_config['type'] == 'hard_tanh':
+                self.layer_info['type'] = 'hard_tanh'
             else:
                 assert 0, f'not support {self.layer_config["type"]}'
         else:
