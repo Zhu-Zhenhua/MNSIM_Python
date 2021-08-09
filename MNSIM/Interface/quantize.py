@@ -465,11 +465,11 @@ class StraightLayer(nn.Module):
             elif self.layer_config['type'] == 'AdaptiveAvgPool2d':
                 self.layer_info['type'] = 'AdaptiveAvgPool2d'
             elif self.layer_config['type'] == 'flatten':
-                self.layer_info['type'] == 'flatten'
+                self.layer_info['type'] = 'flatten'
             elif self.layer_config['type'] == 'hard_tanh':
-                self.layer_info['type'] == 'hard_tanh'
+                self.layer_info['type'] = 'hard_tanh'
             elif self.layer_config['type']=='expand':
-                self.layer_info['type']='expand'
+                self.layer_info['type'] = 'expand'
             elif self.layer_config["type"] == "downsample":
                 self.layer_info["type"] = 'downsample'
             else:
