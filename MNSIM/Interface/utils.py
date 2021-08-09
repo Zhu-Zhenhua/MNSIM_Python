@@ -235,6 +235,9 @@ def transfer_layer_config_list(mnsim_cfg):
             layer_config_list[-1]["type"] = "fc"
             layer_config_list[-1]["out_features"] = cfg["out_features"]
             layer_config_list[-1]["in_features"] = cfg["in_features"]
+        elif cfg['_type'] == 'hard_tanh':
+            layer_config_list.append(OrderedDict())
+            layer_config_list[-1]["type"] = "hard_tanh"
         elif cfg["_type"] == "relu":
             layer_config_list.append(OrderedDict())
             layer_config_list[-1]["type"] = "relu"
