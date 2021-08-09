@@ -26,27 +26,32 @@ class QuantizeFunction(Function):
         # last_value change only when training
         if mode == 'weight':
             last_weight_bit = qbit
-            scale = torch.max(torch.abs(input)).item()
         elif mode == 'activation':
             last_activation_bit = qbit
-            if training:
-                ratio = 0.707
-                tmp = last_value.item()
-                if tmp <= 0:
-                    tmp = 3 * torch.std(input).item() + torch.abs(torch.mean(input)).item()
-                else:
-                    # tmp = ratio * tmp + (1 - ratio) * torch.max(torch.abs(input)).item()
-                    tmp = ratio * tmp + (1 - ratio) * \
-                        (3 * torch.std(input).item() + torch.abs(torch.mean(input)).item())
-                last_value.data[0] = tmp
-            scale = last_value.data[0]
         else:
             assert 0, f'not support {mode}'
+        # both weight and activation use min(max, 3*sigma+mu)
+        if training or last_value is None:
+            max_scale = torch.max(torch.abs(input))
+            var_scale = 3 * torch.std(input) + torch.abs(torch.mean(input))
+            scale = min(max_scale, var_scale)
+        # update when training and last_value is not none
+        if training and last_value is not None:
+            if last_value.item() <= 0:
+                last_value.data[0] = scale
+            else:
+                ratio = 0.1
+                last_value.data[0] = ratio * last_value.data[0] + \
+                    (1 - ratio) * scale
+        # set scale in this quantize step
+        if not (training or last_value is None):
+            scale = last_value.data[0]
         # transfer
         thres = 2 ** (qbit - 1) - 1
-        output = input / scale
-        output = torch.clamp(torch.round(output * thres), 0 - thres, thres - 0)
-        output = output * scale / thres
+        output:torch.Tensor = input * (thres / scale)
+        output.round_().clamp_(min=-thres, max=thres)
+        output.div_((thres / scale))
+        scale = scale.item()
         if mode == 'weight':
             last_weight_scale = scale / thres
         elif mode == 'activation':
@@ -74,6 +79,7 @@ class QuantizeLayer(nn.Module):
         self.hardware_config = copy.deepcopy(hardware_config)
         self.layer_config = copy.deepcopy(layer_config)
         self.quantize_config = copy.deepcopy(quantize_config)
+        self.bypass_quantize_weight = layer_config.get("bypass_quantize_weight", False)
         # split weights
         if self.layer_config['type'] == 'conv':
             assert 'in_channels' in self.layer_config.keys()
@@ -191,10 +197,14 @@ class QuantizeLayer(nn.Module):
             # last activation bit and scale
             self.bit_scale_list.data[0, 0] = last_activation_bit
             self.bit_scale_list.data[0, 1] = last_activation_scale
-            weight = Quantize(weight, self.quantize_config['weight_bit'], 'weight', None, None)
-            # weight bit and scale
-            self.bit_scale_list.data[1, 0] = last_weight_bit
-            self.bit_scale_list.data[1, 1] = last_weight_scale
+            if self.bypass_quantize_weight:
+                self.bit_scale_list.data[1, 0] = self.quantize_config['weight_bit']
+                assert self.bit_scale_list.data[1, 1] > 0
+            else:
+                weight = Quantize(weight, self.quantize_config['weight_bit'], 'weight', None, False)
+                # weight bit and scale
+                self.bit_scale_list.data[1, 0] = last_weight_bit
+                self.bit_scale_list.data[1, 1] = last_weight_scale
             if self.layer_config['type'] == 'conv':
                 output = F.conv2d(
                     input, weight, None, \
@@ -405,20 +415,27 @@ class StraightLayer(nn.Module):
             self.layer = EleSumLayer()
         elif self.layer_config['type'] == 'AdaptiveAvgPool2d':
             self.layer = nn.AdaptiveAvgPool2d(layer_config["output_size"])
+        elif self.layer_config['type'] == 'flatten':
+            self.layer = nn.Flatten(start_dim=layer_config["start_dim"], end_dim=layer_config["end_dim"])
+        elif self.layer_config['type'] == 'hard_tanh':
+            self.layer = nn.Hardtanh()
         elif self.layer_config['type'] == "expand":
-            self.layer = ExpandLayer(layer_config["_max_channels"])
+            self.layer = ExpandLayer(layer_config["max_channels"])
         elif self.layer_config['type'] == 'downsample':
             self.layer = DownSampleLayer()
-        elif self.layer_config['type'] == 'flatten':
-            self.layer = nn.Flatten(start_dim=layer_config["start_dim"],end_dim=layer_config["end_dim"])
-        elif self.layer_config['type'] == 'hard_tanh':
-            self.layer = nn.Tanh()
         else:
             assert 0, f'not support {self.layer_config["type"]}'
         # self.last_value = nn.Parameter(torch.ones(1))
-        self.register_buffer('last_value', torch.ones(1))
+        self.register_buffer('last_value', (-1) * torch.ones(1))
         # self.last_value[0] = 1
         self.layer_info = None
+        if "quantize_flag" in layer_config.keys():
+            self.quantize_flag = layer_config["quantize_flag"]
+        else:
+            if layer_config["type"] == "bn":
+                self.quantize_flag = True
+            else:
+                self.quantize_flag = False
     def structure_forward(self, input):
         if self.layer_config['type'] != 'element_sum':
             # generate input shape and output shape
@@ -445,10 +462,14 @@ class StraightLayer(nn.Module):
                 self.layer_info['features'] = self.layer_config['features']
             elif self.layer_config['type'] == 'dropout':
                 self.layer_info['type'] = 'dropout'
+            elif self.layer_config['type'] == 'AdaptiveAvgPool2d':
+                self.layer_info['type'] = 'AdaptiveAvgPool2d'
+            elif self.layer_config['type'] == 'flatten':
+                self.layer_info['type'] == 'flatten'
+            elif self.layer_config['type'] == 'hard_tanh':
+                self.layer_info['type'] == 'hard_tanh'
             elif self.layer_config['type']=='expand':
                 self.layer_info['type']='expand'
-            elif self.layer_config['type']=='AdaptiveAvgPool2d':
-                self.layer_info['type']='AdaptiveAvgPool2d'
             elif self.layer_config["type"] == "downsample":
                 self.layer_info["type"] = 'downsample'
             elif self.layer_config['type'] == 'flatten':
@@ -483,7 +504,7 @@ class StraightLayer(nn.Module):
         # fix training and single fix test
         if METHOD == 'FIX_TRAIN' or METHOD == 'SINGLE_FIX_TEST':
             output = self.layer(input)
-            if self.layer_config['type'] == 'bn':
+            if self.quantize_flag:
                 output = Quantize(output, self.quantize_config['activation_bit'], 'activation', self.last_value, self.training)
             return output
         assert 0, f'not support {METHOD}'
@@ -491,4 +512,8 @@ class StraightLayer(nn.Module):
         return None
     def extra_repr(self):
         return str(self.hardware_config) + ' ' + str(self.layer_config) + ' ' + str(self.quantize_config)
-StraightLayerStr = ['pooling', 'relu', 'view', 'bn', 'dropout', 'element_sum','expand','AdaptiveAvgPool2d', 'downsample','flatten', 'hard_tanh']
+StraightLayerStr = [
+    'pooling', 'relu', 'view', 'bn', 'dropout',
+    'element_sum', 'expand', 'AdaptiveAvgPool2d', 'downsample', 'flatten',
+    'hard_tanh'
+]

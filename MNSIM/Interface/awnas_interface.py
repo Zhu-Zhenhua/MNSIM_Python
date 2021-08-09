@@ -45,7 +45,6 @@ class AWNASTrainTestInterface(TrainTestInterface):
         ) = utils.load_sim_config(SimConfig_path, extra_define)
         # input awnas layer list and param list
         (
-            hardware_config,
             layer_config_list,
             quantize_config_list,
             input_index_list,
@@ -72,7 +71,7 @@ class AWNASTrainTestInterface(TrainTestInterface):
         self.energy_model=None
 
     def _get_mothod_adc(self):
-        return "TRADITION", "SCALE"
+        return "FIX_TRAIN", "SCALE"
 
     def _get_objective_mode(self, inputs):
         # set net device to inputs device
