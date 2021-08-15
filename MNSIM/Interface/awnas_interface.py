@@ -156,11 +156,7 @@ class AWNASTrainTestInterface(TrainTestInterface):
             self.latency_model.calculate_model_latency(mode=1)
         else:
             self.latency_model.calculate_model_latency_nopipe()
-        total_latency = sum(self.latency_model.total_buffer_latency) + \
-            sum(self.latency_model.total_computing_latency) + \
-            sum(self.latency_model.total_digital_latency) + \
-            sum(self.latency_model.total_intra_tile_latency) + \
-            sum(self.latency_model.total_inter_tile_latency)
+        total_latency = max(max(self.latency_model.finish_time))
         return total_latency
 
     def area_evaluate(self):

@@ -2,6 +2,8 @@
 import collections
 import copy
 import math
+import random
+import re
 
 import numpy as np
 import torch
@@ -64,6 +66,24 @@ class QuantizeFunction(Function):
         return grad_output, None, None, None, None
 Quantize = QuantizeFunction.apply
 
+class EvenKernelConv(nn.Conv2d):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.padding_flag = bool(random.randint(0, 1))
+    def forward(self, inputs):
+        outputs = super().forward(inputs)
+        # check for even kernel
+        if self.kernel_size[0] % 2 == 0 and \
+            self.padding[0] >= self.kernel_size[0] // 2:
+            # fake output
+            assert len(outputs.shape) == 4, \
+                "The outputs should have 4 dim"
+            if self.padding_flag:
+                outputs = outputs[:, :, :-1, :-1]
+            else:
+                outputs = outputs[:, :, 1:, 1:]
+        return outputs
+
 # AB = 1
 # N = 512
 # Q = 10
@@ -75,6 +95,7 @@ Quantize = QuantizeFunction.apply
 class QuantizeLayer(nn.Module):
     def __init__(self, hardware_config, layer_config, quantize_config):
         super(QuantizeLayer, self).__init__()
+        assert "groups" not in layer_config
         # load hardware layer and quantize config in setting
         self.hardware_config = copy.deepcopy(hardware_config)
         self.layer_config = copy.deepcopy(layer_config)
@@ -513,3 +534,128 @@ StraightLayerStr = [
     'element_sum', 'expand', 'AdaptiveAvgPool2d', 'downsample', 'flatten',
     'hard_tanh'
 ]
+
+class GroupLayer(nn.Module):
+    def __init__(self, hardware_config, layer_config, quantize_config):
+        super().__init__()
+        self.hardware_config = copy.deepcopy(hardware_config)
+        self.layer_config = copy.deepcopy(layer_config)
+        self.quantize_config = copy.deepcopy(quantize_config)
+        assert 'groups' in self.layer_config.keys() and self.layer_config["groups"] != 1
+        self.groups = self.layer_config['groups']
+        assert 'in_channels' in self.layer_config.keys() and \
+            self.layer_config['in_channels'] % self.layer_config['groups'] == 0
+        assert 'out_channels' in self.layer_config.keys() \
+            and self.layer_config['out_channels'] % self.layer_config['groups'] == 0
+        # slice layer config
+        slice_layer_config = copy.deepcopy(self.layer_config)
+        slice_layer_config.pop("groups")
+        slice_layer_config["type"] = "conv"
+        slice_layer_config["in_channels"] = self.layer_config // self.groups
+        slice_layer_config["out_channels"] = self.layer_config // self.groups
+        # group layer
+        self.group_conv = nn.ModuleList([QuantizeLayer(
+            hardware_config, slice_layer_config, quantize_config
+        )])
+        # self.last_value = nn.Parameter(torch.ones(1))
+        self.register_buffer('last_value', (-1) * torch.ones(1))
+        # self.last_value[0] = 1
+        # self.bit_scale_list = nn.Parameter(torch.FloatTensor([[9,1],[9,1],[9,1]]))
+        self.register_buffer('bit_scale_list', torch.FloatTensor([
+            [quantize_config['activation_bit'], -1],
+            [quantize_config['weight_bit'], -1],
+            [quantize_config['activation_bit'], -1]
+        ]))
+    def structure_forward(self, input):
+         # TRADITION
+        input_shape = input.shape
+        input_list = torch.split(input, self.groups, dim = 1)
+        output = list()
+        for i in range(len(self.group_conv)):
+            output.append(self.group_conv[i].structure_forward(input_list[i]))
+        output = torch.cat(output, dim=1)
+        output_shape = output.shape
+        # layer_info
+        self.layer_info = collections.OrderedDict()
+        self.layer_info['type'] = 'conv'
+        self.layer_info['Inputchannel'] = int(input_shape[1]) // self.groups
+        self.layer_info['Inputsize'] = list(input_shape[2:])
+        self.layer_info['Kernelsize'] = self.layer_config['kernel_size']
+        self.layer_info['Stride'] = self.layer_config['stride']
+        self.layer_info['Padding'] = self.layer_config['padding']
+        self.layer_info['Outputchannel'] = int(output_shape[1])
+        self.layer_info['Outputsize'] = list(output_shape[2:])
+        self.layer_info['Inputbit'] = int(self.bit_scale_list[0,0].item())
+        self.layer_info['Weightbit'] = int(self.quantize_config['weight_bit'])
+        self.layer_info['outputbit'] = int(self.quantize_config['activation_bit'])
+        self.layer_info['row_split_num'] = self.groups * \
+            len(self.group_conv[0].layer_list)
+        self.layer_info['weight_cycle'] = math.ceil((self.quantize_config['weight_bit'] - 1) / (self.hardware_config['weight_bit']))
+        if 'input_index' in self.layer_config:
+            self.layer_info['Inputindex'] = self.layer_config['input_index']
+        else:
+            self.layer_info['Inputindex'] = [-1]
+        self.layer_info['Outputindex'] = [1]
+        return output
+    def _check(self):
+        assert self.training == False
+        # all group conv, last_value is the same, bit_scale_list is the same
+        for i in range(len(self.group_conv)):
+            assert torch.isclose(
+                self.group_conv[i].last_value,
+                self.last_value
+            )
+            for s in range(3):
+                for t in range(2):
+                    assert torch.isclose(
+                        self.group_conv[i].bit_scale_list[s][t],
+                        self.bit_scale_list[s][t],
+                    )
+    def forward(self, input, method = 'SINGLE_FIX_TEST', adc_action = 'SCALE'):
+        self._check()
+        # forward
+        input_list = torch.split(input, self.groups, dim = 1)
+        output = list()
+        for i in range(len(self.group_conv)):
+            output.append(self.group_conv[i](
+                input_list[i], method, adc_action
+            ))
+        output = torch.cat(output, dim=1)
+        return output
+    def get_bit_weights(self):
+        bit_weights = collections.OrderedDict()
+        base = 0
+        for module in self.group_conv:
+            for key, value in module.get_bit_weights():
+                match_obj = re.match(r"^split(\d+)_weight(\d+)_(.*)$", key)
+                assert match_obj is not None
+                i, j, k = int(match_obj(1)), int(match_obj(2)), match_obj(3)
+                assert k in ["positive", "negative"]
+                bit_weights[f"split{i+base}_weight{j}_{k}"] = value
+            base += len(module.layer_list)
+        return bit_weights
+    def set_weights_forward(self, input, bit_weights, adc_action):
+        self._check()
+        # forward
+        input_list = torch.split(input, self.groups, dim = 1)
+        output = list()
+        base = 0
+        for i, module in enumerate(self.group_conv):
+            l = len(module.layer_list)
+            # get bit weights
+            tmp_bit_weights = collections.OrderedDict()
+            for key, value in bit_weights:
+                match_obj = re.match(r"^split(\d+)_weight(\d+)_(.*)$", key)
+                assert match_obj is not None
+                i, j, k = int(match_obj(1)), int(match_obj(2)), match_obj(3)
+                assert k in ["positive", "negative"]
+                if i >= base and i < base + l:
+                    tmp_bit_weights[f"split{i-base}_weight{j}_{k}"] = value
+            base += l
+            # forward
+            output.append(module.set_weights_forward(input_list[i], tmp_bit_weights, adc_action))
+        output = torch.cat(output, dim=1)
+        return output
+    def extra_repr(self):
+        return str(self.hardware_config) + ' ' + str(self.layer_config) + ' ' + str(self.quantize_config)
+GroupLayerStr = ['group_conv']

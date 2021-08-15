@@ -26,6 +26,8 @@ class NetworkGraph(nn.Module):
                 layer = quantize.QuantizeLayer(hardware_config, layer_config, quantize_config)
             elif layer_config['type'] in quantize.StraightLayerStr:
                 layer = quantize.StraightLayer(hardware_config, layer_config, quantize_config)
+            elif layer_config['type'] in quantize.GroupLayerStr:
+                layer = quantize.GroupLayer(hardware_config, layer_config, quantize_config)
             else:
                 assert 0, f'not support {layer_config["type"]}'
             self.layer_list.append(layer)
@@ -84,6 +86,9 @@ class NetworkGraph(nn.Module):
             if isinstance(layer, quantize.QuantizeLayer):
                 tensor_list.append(layer.set_weights_forward(tensor_list[input_index[0] + i + 1], net_bit_weights[count], adc_action))
                 # tensor_list.append(layer.forward(tensor_list[input_index[0] + i + 1], 'SINGLE_FIX_TEST', adc_action))
+                count = count + 1
+            elif isinstance(layer, quantize.GroupLayer):
+                tensor_list.append(layer.set_weights_forward(tensor_list[input_index[0] + i + 1], net_bit_weights[count], adc_action))
                 count = count + 1
             else:
                 if len(input_index) == 1:
@@ -146,13 +151,25 @@ class NetworkGraph(nn.Module):
                 # get layer info
                 layer_config = None
                 hardware_config = None
+                count = 0
                 for i in range(len(self.layer_list)):
                     name = f'layer_list.{i}'
-                    if name == tmp_key:
-                        layer_config = self.layer_list[i].layer_config
-                        hardware_config = self.layer_list[i].hardware_config
+                    if name in tmp_key:
+                        if self.layer_list[i].layer_config["type"] in quantize.GroupLayerStr:
+                            match_obj = re.match(r"^layer_list\.(\d+)\.group_conv\.(\d+)$", tmp_key)
+                            assert match_obj is not None
+                            s, t = int(match_obj(1)), int(match_obj(2))
+                            assert s == i
+                            layer_config = self.layer_list[s].group_conv[t].layer_config
+                            hardware_config = self.layer_list[s].group_conv[t].hardware_config
+                            count += 1
+                        else:
+                            layer_config = self.layer_list[i].layer_config
+                            hardware_config = self.layer_list[i].hardware_config
+                            count += 1
                 assert layer_config, 'layer must have layer config'
                 assert hardware_config, 'layer must have hardware config'
+                assert count == 1
                 # concat weights
                 total_weights = torch.cat([state_dict[key] for key in key_list], dim = 1)
                 # split weights
@@ -167,7 +184,7 @@ class NetworkGraph(nn.Module):
                 for i, weights in enumerate(weights_list):
                     tmp_state_dict[tmp_key + f'.layer_list.{i}.weight'] = weights
         # load weights
-        self.load_state_dict(tmp_state_dict)
+        self.load_state_dict(tmp_state_dict, strict=True)
 
 def get_net(hardware_config = None, cate = 'lenet', num_classes = 10):
     # initial config

@@ -119,7 +119,7 @@ def transfer_awnas_state_dict(cand_net):
         param.update({
             "last_value": torch.Tensor([last_value])
         })
-        if cfg["_type"] == "conv" or cfg["_type"] == "fc":
+        if cfg["_type"] == "conv" or cfg["_type"] == "fc" or cfg["_type"] == "group_conv":
             assert len(cfg['input']) == 1 and len(cfg['output']) == 1
             assert "weight_info" in cfg.keys()
             bit_scale_list = []
@@ -142,16 +142,29 @@ def transfer_awnas_state_dict(cand_net):
     state_dict = collections.OrderedDict()
     assert len(param_list) == len(mnsim_cfg)
     for i, (param, cfg) in enumerate(zip(param_list, mnsim_cfg)):
+        state_dict[f"layer_list.{i}.last_value"] = param["last_value"]
         if cfg["_type"] == "fc" or cfg["_type"] == "conv":
             state_dict[f"layer_list.{i}.bit_scale_list"] = param["bit_scale_list"]
-            state_dict[f"layer_list.{i}.layer_list.{i}.weight"] = param["weight"]
-        # if self.layer_con
+            state_dict[f"layer_list.{i}.layer_list.0.weight"] = param["weight"]
+        # if self.layer_group_conv
+        if cfg["_type"] == "group_conv":
+            state_dict[f"layer_list.{i}.bit_scale_list"] = param["bit_scale_list"]
+            g = cfg["groups"]
+            l = param["weight"].shape()[0]
+            assert l % g == 0
+            step = l // g
+            for j in range(cfg["groups"]):
+                state_dict[f"layer_list.{i}.group_conv.{j}.last_value"] = \
+                    param["last_value"]
+                state_dict[f"layer_list.{i}.group_conv.{j}.bit_scale_list"] = \
+                    param["bit_scale_list"]
+                state_dict[f"layer_list.{i}.group_conv.{j}.layer_list.0.weight"] = \
+                    param["weight"][(j*step):((j+1)*step),...]
         if mnsim_cfg[i]["_type"] == "bn":
             state_dict[f"layer_list.{i}.layer.weight"] = param["weight"]
             state_dict[f"layer_list.{i}.layer.bias"] = param["bias"]
             state_dict[f"layer_list.{i}.layer.running_mean"] = param["running_mean"]
             state_dict[f"layer_list.{i}.layer.running_var"] = param["running_var"]
-        state_dict[f"layer_list.{i}.last_value"] = param["last_value"]
     return state_dict
 
 def transfer_awnas_layer_list(mnsim_cfg):
@@ -254,6 +267,14 @@ def transfer_layer_config_list(mnsim_cfg):
             layer_config_list[-1]["max_channels"] =cfg["max_channels"]
         elif cfg["_type"] == "downsample":
             layer_config_list[-1]["type"] = "downsample"
+        elif cfg["_type"] == "group_conv":
+            layer_config_list[-1]["type"] = "group_conv"
+            layer_config_list[-1]["in_channels"] = cfg["in_channels"]
+            layer_config_list[-1]["out_channels"] = cfg["out_channels"]
+            layer_config_list[-1]["kernel_size"] = cfg["kernel_size"]
+            layer_config_list[-1]["stride"] = cfg["stride"]
+            layer_config_list[-1]["padding"] = cfg["padding"]
+            layer_config_list[-1]["groups"] = cfg["groups"]
         elif cfg["_type"] == "quantize":
             raise Exception(
                 "NOT support quantize layer in MNSIM"
