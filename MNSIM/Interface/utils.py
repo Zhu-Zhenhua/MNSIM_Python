@@ -138,6 +138,7 @@ def transfer_awnas_state_dict(cand_net):
             param.update({
                 "bit_scale_list": torch.Tensor(bit_scale_list)
             })
+            # save padding flag before
     # state2: transfer keys of param_list into mnsim acceptable keys
     state_dict = collections.OrderedDict()
     assert len(param_list) == len(mnsim_cfg)
@@ -146,6 +147,8 @@ def transfer_awnas_state_dict(cand_net):
         if cfg["_type"] == "fc" or cfg["_type"] == "conv":
             state_dict[f"layer_list.{i}.bit_scale_list"] = param["bit_scale_list"]
             state_dict[f"layer_list.{i}.layer_list.0.weight"] = param["weight"]
+            if not cfg["_type"] == "fc":
+                state_dict[f"layer_list.{i}.layer_list.0.padding_flag"] = param["padding_flag"]
         # if self.layer_group_conv
         if cfg["_type"] == "group_conv":
             state_dict[f"layer_list.{i}.bit_scale_list"] = param["bit_scale_list"]
@@ -160,11 +163,17 @@ def transfer_awnas_state_dict(cand_net):
                     param["bit_scale_list"]
                 state_dict[f"layer_list.{i}.group_conv.{j}.layer_list.0.weight"] = \
                     param["weight"][(j*step):((j+1)*step),...]
+                state_dict[f"layer_list.{i}.group_conv.{j}.layer_list.0.padding_flag"] = \
+                    param["padding_flag"]
         if mnsim_cfg[i]["_type"] == "bn":
             state_dict[f"layer_list.{i}.layer.weight"] = param["weight"]
             state_dict[f"layer_list.{i}.layer.bias"] = param["bias"]
             state_dict[f"layer_list.{i}.layer.running_mean"] = param["running_mean"]
             state_dict[f"layer_list.{i}.layer.running_var"] = param["running_var"]
+        else:
+            for k, _ in param.items():
+                assert not k.endswith("bias")
+        # check for bias
     return state_dict
 
 def transfer_awnas_layer_list(mnsim_cfg):

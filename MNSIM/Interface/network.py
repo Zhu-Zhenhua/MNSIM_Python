@@ -135,7 +135,10 @@ class NetworkGraph(nn.Module):
         # concat all layer_list weights
         keys_map = collections.OrderedDict()
         for key in state_dict.keys():
-            tmp_key = re.sub('\.layer_list\.\d+\.weight$', '', key)
+            if key.endswith("padding_flag"):
+                tmp_key = re.sub('\.layer_list\.\d+\.padding_flag$', '', key)
+            else:
+                tmp_key = re.sub('\.layer_list\.\d+\.weight$', '', key)
             if tmp_key not in keys_map.keys():
                 keys_map[tmp_key] = [key]
             else:
@@ -149,36 +152,52 @@ class NetworkGraph(nn.Module):
             else:
                 # print(f'transfer weights {tmp_key}')
                 # get layer info
-                layer_config = None
-                hardware_config = None
-                count = 0
-                for i in range(len(self.layer_list)):
-                    name = f'layer_list.{i}'
-                    if name in tmp_key:
-                        if self.layer_list[i].layer_config["type"] in quantize.GroupLayerStr:
-                            match_obj = re.match(r"^layer_list\.(\d+)\.group_conv\.(\d+)$", tmp_key)
-                            assert match_obj is not None
-                            s, t = int(match_obj(1)), int(match_obj(2))
-                            assert s == i
-                            layer_config = self.layer_list[s].group_conv[t].layer_config
-                            hardware_config = self.layer_list[s].group_conv[t].hardware_config
-                            count += 1
-                        else:
-                            layer_config = self.layer_list[i].layer_config
-                            hardware_config = self.layer_list[i].hardware_config
-                            count += 1
-                assert layer_config, 'layer must have layer config'
-                assert hardware_config, 'layer must have hardware config'
-                assert count == 1
-                # concat weights
-                total_weights = torch.cat([state_dict[key] for key in key_list], dim = 1)
+                if "group_conv" in tmp_key:
+                    match_obj = re.match(r"^layer_list\.(\d+)\.group_conv\.(\d+)$", tmp_key)
+                    assert match_obj is not None
+                    s, t = int(match_obj.group(1)), int(match_obj.group(2))
+                    layer_config = self.layer_list[s].group_conv[t].layer_config
+                    hardware_config = self.layer_list[s].group_conv[t].hardware_config
+                else:
+                    match_obj = re.match(r"^layer_list\.(\d+)$", tmp_key)
+                    assert match_obj is not None
+                    s = int(match_obj.group(1))
+                    layer_config = self.layer_list[s].layer_config
+                    hardware_config = self.layer_list[s].hardware_config
                 # split weights
                 if layer_config['type'] == 'conv':
                     split_len = (hardware_config['xbar_size'] // (layer_config['kernel_size'] ** 2))
+                    if layer_config["in_channels"] % split_len == 0:
+                        split_num = layer_config["in_channels"] // split_len
+                    else:
+                        split_num = layer_config["in_channels"] // split_len + 1
                 elif layer_config['type'] == 'fc':
                     split_len = hardware_config['xbar_size']
+                    if layer_config["in_features"] % split_len == 0:
+                        split_num = layer_config["in_features"] // split_len
+                    else:
+                        split_num = layer_config["in_features"] // split_len + 1
                 else:
                     assert 0, f'not support {layer_config["type"]}'
+                # concat padding flag
+                if layer_config["type"] == "conv":
+                    padding_flag_key = list(filter(
+                        lambda x: x.endswith("padding_flag"),
+                        key_list
+                    ))
+                    # padding flag
+                    total_flag = [state_dict[key] for key in padding_flag_key]
+                    total_flag = [t.item() == 1 for t in total_flag]
+                    assert all(total_flag) or (not any(total_flag))
+                    for i in range(split_num):
+                        tmp_state_dict[tmp_key + f'.layer_list.{i}.padding_flag'] = \
+                            state_dict[padding_flag_key[0]]
+                weight_keys = list(filter(
+                    lambda x: x.endswith("weight"),
+                    key_list
+                ))
+                # concat weights
+                total_weights = torch.cat([state_dict[key] for key in weight_keys], dim = 1)
                 weights_list = torch.split(total_weights, split_len, dim = 1)
                 # load weights
                 for i, weights in enumerate(weights_list):

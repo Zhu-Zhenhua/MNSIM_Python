@@ -66,10 +66,26 @@ class QuantizeFunction(Function):
         return grad_output, None, None, None, None
 Quantize = QuantizeFunction.apply
 
+def EvenConv2dF(input, weight, bias, stride, padding, dilation, groups, padding_flag):
+    output = F.conv2d(input, weight, bias, stride, padding, dilation, groups)
+    kernel_size = weight.shape[-1]
+    if kernel_size % 2 == 0 and \
+        padding >= kernel_size // 2:
+        # fake output
+        assert len(output.shape) == 4, \
+            "The output should have 4 dim"
+        if padding_flag.item() == 1:
+            output = output[:, :, :-1, :-1]
+        else:
+            output = output[:, :, 1:, 1:]
+    return output
+
 class EvenKernelConv(nn.Conv2d):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, padding_flag, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.padding_flag = bool(random.randint(0, 1))
+        # self.padding_flag = bool(random.randint(0, 1))
+        assert padding_flag in [0, 1]
+        self.register_buffer("padding_flag", torch.tensor(padding_flag))
     def forward(self, inputs):
         outputs = super().forward(inputs)
         # check for even kernel
@@ -78,11 +94,12 @@ class EvenKernelConv(nn.Conv2d):
             # fake output
             assert len(outputs.shape) == 4, \
                 "The outputs should have 4 dim"
-            if self.padding_flag:
+            if self.padding_flag.item() == 1:
                 outputs = outputs[:, :, :-1, :-1]
             else:
                 outputs = outputs[:, :, 1:, 1:]
         return outputs
+
 
 # AB = 1
 # N = 512
@@ -119,7 +136,8 @@ class QuantizeLayer(nn.Module):
                 self.layer_config['stride'] = 1
             if 'padding' not in self.layer_config.keys():
                 self.layer_config['padding'] = 0
-            self.layer_list = nn.ModuleList([nn.Conv2d(
+            self.layer_list = nn.ModuleList([EvenKernelConv(
+                random.randint(0, 1),
                 i, self.layer_config['out_channels'], self.layer_config['kernel_size'],
                 stride = self.layer_config['stride'], padding = self.layer_config['padding'], dilation = 1, groups = 1, bias = False
                 )
@@ -227,9 +245,10 @@ class QuantizeLayer(nn.Module):
                 self.bit_scale_list.data[1, 0] = last_weight_bit
                 self.bit_scale_list.data[1, 1] = last_weight_scale
             if self.layer_config['type'] == 'conv':
-                output = F.conv2d(
+                output = EvenConv2dF(
                     input, weight, None, \
-                    self.layer_config['stride'], self.layer_config['padding'], 1, 1
+                    self.layer_config['stride'], self.layer_config['padding'], 1, 1,
+                    self.layer_list[0].padding_flag
                 )
             elif self.layer_config['type'] == 'fc':
                 output = F.linear(input, weight, None)
@@ -313,9 +332,10 @@ class QuantizeLayer(nn.Module):
                 for j in range(weight_cycle):
                     tmp = None
                     if self.layer_config['type'] == 'conv':
-                        tmp = F.conv2d(
+                        tmp = EvenConv2dF(
                             activation_in_container[i], weight_container[j], None, \
-                            self.layer_config['stride'], self.layer_config['padding'], 1, 1
+                            self.layer_config['stride'], self.layer_config['padding'], 1, 1,
+                            self.layer_list[j].padding_flag
                         )
                     elif self.layer_config['type'] == 'fc':
                         tmp = F.linear(activation_in_container[i], weight_container[j], None)
@@ -629,7 +649,7 @@ class GroupLayer(nn.Module):
             for key, value in module.get_bit_weights():
                 match_obj = re.match(r"^split(\d+)_weight(\d+)_(.*)$", key)
                 assert match_obj is not None
-                i, j, k = int(match_obj(1)), int(match_obj(2)), match_obj(3)
+                i, j, k = int(match_obj.group(1)), int(match_obj.group(2)), match_obj.group(3)
                 assert k in ["positive", "negative"]
                 bit_weights[f"split{i+base}_weight{j}_{k}"] = value
             base += len(module.layer_list)
@@ -647,7 +667,7 @@ class GroupLayer(nn.Module):
             for key, value in bit_weights:
                 match_obj = re.match(r"^split(\d+)_weight(\d+)_(.*)$", key)
                 assert match_obj is not None
-                i, j, k = int(match_obj(1)), int(match_obj(2)), match_obj(3)
+                i, j, k = int(match_obj.group(1)), int(match_obj.group(2)), match_obj.group(3)
                 assert k in ["positive", "negative"]
                 if i >= base and i < base + l:
                     tmp_bit_weights[f"split{i-base}_weight{j}_{k}"] = value
