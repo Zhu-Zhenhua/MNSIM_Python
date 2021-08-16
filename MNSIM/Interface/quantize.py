@@ -653,7 +653,7 @@ class GroupLayer(nn.Module):
                     bit_weights[key] = []
                 bit_weights[key].append(value)
         for key, value in bit_weights.items():
-            bit_weights[key] = torch.cat(value, dim=0)
+            bit_weights[key] = np.concatenate(value, axis=0)
         return bit_weights
     def set_weights_forward(self, input, bit_weights, adc_action):
         self._check()
@@ -666,7 +666,7 @@ class GroupLayer(nn.Module):
             for _ in range(self.groups)
         ]
         for key, value in bit_weights.items():
-            vs = torch.split(value, self.split_output, dim=0)
+            vs = np.split(value, self.groups, axis=0)
             assert len(vs) == self.groups
             for i in range(self.groups):
                 tmp_bit_weights[i][key] = vs[i]
