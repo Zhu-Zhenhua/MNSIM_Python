@@ -1,4 +1,5 @@
 #-*-coding:utf-8-*-
+from MNSIM.Interface import quantize
 import collections
 import configparser
 import copy
@@ -138,10 +139,16 @@ class TrainTestInterface(object):
         # set relative index to absolute index
         absolute_index = [None] * len(net_structure_info)
         absolute_count = 0
+        real_type_list = ['conv', 'pooling', 'element_sum', 'fc']
         for i in range(len(net_structure_info)):
             if not (len(net_structure_info[i]['Outputindex']) == 1 and net_structure_info[i]['Outputindex'][0] == 1):
                 raise Exception('duplicate output')
-            if net_structure_info[i]['type'] in ['conv', 'pooling', 'element_sum', 'fc']:
+            assert net_structure_info[i]['type'] in quantize.QuantizeLayerStr + \
+                quantize.StraightLayerStr, \
+                "does not support {}".format(
+                    net_structure_info[i]['type']
+                )
+            if net_structure_info[i]['type'] in real_type_list:
                 absolute_index[i] = absolute_count
                 absolute_count = absolute_count + 1
             else:
@@ -150,7 +157,7 @@ class TrainTestInterface(object):
                 absolute_index[i] = absolute_index[i + net_structure_info[i]['Inputindex'][0]]
         graph = list()
         for i in range(len(net_structure_info)):
-            if net_structure_info[i]['type'] in ['conv', 'pooling', 'element_sum', 'fc']:
+            if net_structure_info[i]['type'] in real_type_list:
                 # layer num, layer type
                 layer_num = absolute_index[i]
                 layer_type = net_structure_info[i]['type']
@@ -159,7 +166,7 @@ class TrainTestInterface(object):
                 # layer output
                 layer_output = list()
                 for tmp_i in range(len(net_structure_info)):
-                    if net_structure_info[tmp_i]['type'] in ['conv', 'pooling', 'element_sum', 'fc']:
+                    if net_structure_info[tmp_i]['type'] in real_type_list:
                         tmp_layer_num = absolute_index[tmp_i]
                         tmp_layer_input = list(map(lambda x: (absolute_index[tmp_i + x] if tmp_i + x != -1 else -1), net_structure_info[tmp_i]['Inputindex']))
                         if layer_num in tmp_layer_input:

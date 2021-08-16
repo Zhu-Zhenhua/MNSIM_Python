@@ -64,6 +64,11 @@ class NetworkGraph(nn.Module):
                     adc_action,
                     )
                 )
+        # save for test
+        # import os
+        # for i, tensor in enumerate(tensor_list):
+        #     file_path = os.path.join("/tmp", f"mnsim_{i}.pt")
+        #     torch.save(tensor, file_path)
         return tensor_list[-1]
     def get_weights(self):
         net_bit_weights = []

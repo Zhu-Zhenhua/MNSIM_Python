@@ -153,7 +153,7 @@ def transfer_awnas_state_dict(cand_net):
         if cfg["_type"] == "group_conv":
             state_dict[f"layer_list.{i}.bit_scale_list"] = param["bit_scale_list"]
             g = cfg["groups"]
-            l = param["weight"].shape()[0]
+            l = param["weight"].shape[0]
             assert l % g == 0
             step = l // g
             for j in range(cfg["groups"]):
@@ -314,7 +314,7 @@ def transfer_layer_config_list(mnsim_cfg):
                 continue
             else:
                 quantize_flag = True
-        if cfg["_type"] in ["conv", "fc"]:
+        if cfg["_type"] in ["conv", "fc", "group_conv"]:
             # append for QuantizeLayer to pass quantizing weights
             # since weights are already quantized
             layer_config_list[-1]["bypass_quantize_weight"] = True

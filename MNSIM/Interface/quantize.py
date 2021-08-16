@@ -335,7 +335,7 @@ class QuantizeLayer(nn.Module):
                         tmp = EvenConv2dF(
                             activation_in_container[i], weight_container[j], None, \
                             self.layer_config['stride'], self.layer_config['padding'], 1, 1,
-                            self.layer_list[j].padding_flag
+                            self.layer_list[layer_num].padding_flag
                         )
                     elif self.layer_config['type'] == 'fc':
                         tmp = F.linear(activation_in_container[i], weight_container[j], None)
@@ -571,12 +571,14 @@ class GroupLayer(nn.Module):
         slice_layer_config = copy.deepcopy(self.layer_config)
         slice_layer_config.pop("groups")
         slice_layer_config["type"] = "conv"
-        slice_layer_config["in_channels"] = self.layer_config // self.groups
-        slice_layer_config["out_channels"] = self.layer_config // self.groups
+        slice_layer_config["in_channels"] = self.layer_config["in_channels"] // self.groups
+        slice_layer_config["out_channels"] = self.layer_config["out_channels"] // self.groups
         # group layer
         self.group_conv = nn.ModuleList([QuantizeLayer(
             hardware_config, slice_layer_config, quantize_config
-        )])
+        ) for _ in range(self.groups)])
+        self.split_input = self.layer_config["in_channels"] // self.groups
+        self.split_output = self.layer_config["out_channels"] // self.groups
         # self.last_value = nn.Parameter(torch.ones(1))
         self.register_buffer('last_value', (-1) * torch.ones(1))
         # self.last_value[0] = 1
@@ -589,7 +591,8 @@ class GroupLayer(nn.Module):
     def structure_forward(self, input):
          # TRADITION
         input_shape = input.shape
-        input_list = torch.split(input, self.groups, dim = 1)
+        input_list = torch.split(input, self.split_input, dim = 1)
+        assert len(input_list) == self.groups
         output = list()
         for i in range(len(self.group_conv)):
             output.append(self.group_conv[i].structure_forward(input_list[i]))
@@ -608,8 +611,7 @@ class GroupLayer(nn.Module):
         self.layer_info['Inputbit'] = int(self.bit_scale_list[0,0].item())
         self.layer_info['Weightbit'] = int(self.quantize_config['weight_bit'])
         self.layer_info['outputbit'] = int(self.quantize_config['activation_bit'])
-        self.layer_info['row_split_num'] = self.groups * \
-            len(self.group_conv[0].layer_list)
+        self.layer_info['row_split_num'] = len(self.group_conv[0].layer_list)
         self.layer_info['weight_cycle'] = math.ceil((self.quantize_config['weight_bit'] - 1) / (self.hardware_config['weight_bit']))
         if 'input_index' in self.layer_config:
             self.layer_info['Inputindex'] = self.layer_config['input_index']
@@ -634,7 +636,8 @@ class GroupLayer(nn.Module):
     def forward(self, input, method = 'SINGLE_FIX_TEST', adc_action = 'SCALE'):
         self._check()
         # forward
-        input_list = torch.split(input, self.groups, dim = 1)
+        input_list = torch.split(input, self.split_input, dim = 1)
+        assert len(input_list) == self.groups
         output = list()
         for i in range(len(self.group_conv)):
             output.append(self.group_conv[i](
@@ -644,36 +647,31 @@ class GroupLayer(nn.Module):
         return output
     def get_bit_weights(self):
         bit_weights = collections.OrderedDict()
-        base = 0
         for module in self.group_conv:
-            for key, value in module.get_bit_weights():
-                match_obj = re.match(r"^split(\d+)_weight(\d+)_(.*)$", key)
-                assert match_obj is not None
-                i, j, k = int(match_obj.group(1)), int(match_obj.group(2)), match_obj.group(3)
-                assert k in ["positive", "negative"]
-                bit_weights[f"split{i+base}_weight{j}_{k}"] = value
-            base += len(module.layer_list)
+            for key, value in module.get_bit_weights().items():
+                if key not in bit_weights.keys():
+                    bit_weights[key] = []
+                bit_weights[key].append(value)
+        for key, value in bit_weights.items():
+            bit_weights[key] = torch.cat(value, dim=0)
         return bit_weights
     def set_weights_forward(self, input, bit_weights, adc_action):
         self._check()
         # forward
-        input_list = torch.split(input, self.groups, dim = 1)
+        input_list = torch.split(input, self.split_input, dim=1)
+        assert len(input_list) == self.groups
         output = list()
-        base = 0
-        for i, module in enumerate(self.group_conv):
-            l = len(module.layer_list)
-            # get bit weights
-            tmp_bit_weights = collections.OrderedDict()
-            for key, value in bit_weights:
-                match_obj = re.match(r"^split(\d+)_weight(\d+)_(.*)$", key)
-                assert match_obj is not None
-                i, j, k = int(match_obj.group(1)), int(match_obj.group(2)), match_obj.group(3)
-                assert k in ["positive", "negative"]
-                if i >= base and i < base + l:
-                    tmp_bit_weights[f"split{i-base}_weight{j}_{k}"] = value
-            base += l
-            # forward
-            output.append(module.set_weights_forward(input_list[i], tmp_bit_weights, adc_action))
+        tmp_bit_weights = [
+            collections.OrderedDict()
+            for _ in range(self.groups)
+        ]
+        for key, value in bit_weights.items():
+            vs = torch.split(value, self.split_output, dim=0)
+            assert len(vs) == self.groups
+            for i in range(self.groups):
+                tmp_bit_weights[i][key] = vs[i]
+        for index, module in enumerate(self.group_conv):
+            output.append(module.set_weights_forward(input_list[index], tmp_bit_weights[index], adc_action))
         output = torch.cat(output, dim=1)
         return output
     def extra_repr(self):

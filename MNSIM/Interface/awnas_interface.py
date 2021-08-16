@@ -11,6 +11,7 @@
     2021/08/03 17:05
 """
 # -*-coding:utf-8-*-
+import collections
 import torch
 from torch import nn
 from MNSIM.Interface import utils
@@ -69,6 +70,8 @@ class AWNASTrainTestInterface(TrainTestInterface):
         self.power_model = None
         self.area_model = None
         self.energy_model = None
+        # set self cache
+        self.cache = collections.OrderedDict()
 
     def _get_mothod_adc(self):
         return "FIX_TRAIN", "SCALE"
@@ -131,7 +134,7 @@ class AWNASTrainTestInterface(TrainTestInterface):
         if self.power_model is not None:
             return
         # self._get_latency_model()
-        self.latency_evaluate()
+        self.latency_evaluate(disable_inner_pipeline)
         self._get_power_model()
         self.energy_model = Model_energy(
             NetStruct=self.structure_file,
@@ -151,22 +154,30 @@ class AWNASTrainTestInterface(TrainTestInterface):
         )
 
     def latency_evaluate(self, disable_inner_pipeline=False):
-        self._get_latency_model()
-        if not (disable_inner_pipeline):
-            self.latency_model.calculate_model_latency(mode=1)
-        else:
-            self.latency_model.calculate_model_latency_nopipe()
-        total_latency = max(max(self.latency_model.finish_time))
-        return total_latency
+        if not f"latency_{disable_inner_pipeline}" in self.cache.keys():
+            self._get_latency_model()
+            if not (disable_inner_pipeline):
+                self.latency_model.calculate_model_latency(mode=1)
+            else:
+                self.latency_model.calculate_model_latency_nopipe()
+            self.cache[f"latency_{disable_inner_pipeline}"] = \
+                max(max(self.latency_model.finish_time))
+        return self.cache[f"latency_{disable_inner_pipeline}"]
 
     def area_evaluate(self):
-        self._get_area_model()
-        return self.area_model.arch_total_area
+        if not "area" in self.cache.keys():
+            self._get_area_model()
+            self.cache["area"] = self.area_model.arch_total_area
+        return self.cache["area"]
 
     def energy_evaluate(self, disable_inner_pipeline=False):
-        self._get_energy_model(disable_inner_pipeline=disable_inner_pipeline)
-        return self.energy_model.arch_total_energy
+        if not "energy" in self.cache.keys():
+            self._get_energy_model(disable_inner_pipeline=disable_inner_pipeline)
+            self.cache["energy"] = self.energy_model.arch_total_energy
+        return self.cache["energy"]
 
     def power_evaluate(self):
-        self._get_power_model()
-        return self.power_model.arch_total_power
+        if not "power" in self.cache.keys():
+            self._get_power_model()
+            self.cache["power"] = self.power_model.arch_total_power
+        return self.cache["power"]
