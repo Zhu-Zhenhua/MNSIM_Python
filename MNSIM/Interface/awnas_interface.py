@@ -161,19 +161,19 @@ class AWNASTrainTestInterface(TrainTestInterface):
             else:
                 self.latency_model.calculate_model_latency_nopipe()
             self.cache[f"latency_{disable_inner_pipeline}"] = \
-                max(max(self.latency_model.finish_time))
+                max(max(self.latency_model.finish_time)) / 1e6
         return self.cache[f"latency_{disable_inner_pipeline}"]
 
     def area_evaluate(self):
         if not "area" in self.cache.keys():
             self._get_area_model()
-            self.cache["area"] = self.area_model.arch_total_area
+            self.cache["area"] = self.area_model.arch_total_area / 1e6
         return self.cache["area"]
 
     def energy_evaluate(self, disable_inner_pipeline=False):
         if not "energy" in self.cache.keys():
             self._get_energy_model(disable_inner_pipeline=disable_inner_pipeline)
-            self.cache["energy"] = self.energy_model.arch_total_energy
+            self.cache["energy"] = self.energy_model.arch_total_energy / 1e6
         return self.cache["energy"]
 
     def power_evaluate(self):
