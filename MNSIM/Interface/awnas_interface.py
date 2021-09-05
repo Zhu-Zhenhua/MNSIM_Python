@@ -80,15 +80,14 @@ class AWNASTrainTestInterface(TrainTestInterface):
         # set net device to inputs device
         self.net.to(inputs.device)
         # get objective mod
-        assert self.objective.mode in ["train_mnsim", "eval"], \
-            "objective.mode can only be train_mnsim or eval in MNSIM, but {}".format(
-                self.objective.mode
-            )
+        # assert self.objective.mode in ["train_mnsim", "eval"], \
+        #     "objective.mode can only be train_mnsim or eval in MNSIM, but {}".format(
+        #         self.objective.mode
+        #     )
         self.net.eval()
-        if self.objective.mode == "train_mnsim":
-            for _, module in self.net.named_modules():
-                if isinstance(module, nn.BatchNorm2d):
-                    module.train()
+        for _, module in self.net.named_modules():
+            if isinstance(module, nn.BatchNorm2d):
+                module.train()
 
     def origin_evaluate(self, inputs):
         """
