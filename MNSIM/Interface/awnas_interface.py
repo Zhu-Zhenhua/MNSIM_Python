@@ -167,6 +167,7 @@ class AWNASTrainTestInterface(TrainTestInterface):
         if not "area" in self.cache.keys():
             self._get_area_model()
             self.cache["area"] = self.area_model.arch_total_area / 1e6
+            # print(self.area_model.arch_total_xbar_utilization)
         return self.cache["area"]
 
     def energy_evaluate(self, disable_inner_pipeline=False):
