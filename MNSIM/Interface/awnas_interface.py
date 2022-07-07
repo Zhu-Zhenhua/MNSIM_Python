@@ -73,7 +73,7 @@ class AWNASTrainTestInterface(TrainTestInterface):
         # set self cache
         self.cache = collections.OrderedDict()
 
-    def _get_mothod_adc(self):
+    def _get_method_adc(self):
         return "FIX_TRAIN", "SCALE"
 
     def _get_objective_mode(self, inputs):
@@ -93,7 +93,7 @@ class AWNASTrainTestInterface(TrainTestInterface):
         """
         origin evaluate
         """
-        method, adc_action = self._get_mothod_adc()
+        method, adc_action = self._get_method_adc()
         self._get_objective_mode(inputs)
         with torch.no_grad():
             outputs = self.net(inputs, method, adc_action)
@@ -103,7 +103,7 @@ class AWNASTrainTestInterface(TrainTestInterface):
         """
         hardware evaluate
         """
-        _, adc_action = self._get_mothod_adc()
+        _, adc_action = self._get_method_adc()
         self._get_objective_mode(inputs)
         with torch.no_grad():
             net_weights = self.get_net_bits()

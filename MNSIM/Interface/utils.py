@@ -228,7 +228,6 @@ def transfer_awnas_layer_list(mnsim_cfg):
         input_params,
     )
 
-
 def transfer_layer_config_list(mnsim_cfg):
     """
     transfer of layer_config_list is too detailed, so an extra transfer function is defined
@@ -252,6 +251,19 @@ def transfer_layer_config_list(mnsim_cfg):
             layer_config_list[-1]["type"] = "fc"
             layer_config_list[-1]["out_features"] = cfg["out_features"]
             layer_config_list[-1]["in_features"] = cfg["in_features"]
+        elif cfg["_type"] == "adaptive_pooling":
+            layer_config_list[-1]["type"] = "pooling"
+            assert cfg["input_size"][0] % cfg["output_size"][0] == 0
+            assert cfg["input_size"][1] % cfg["output_size"][1] == 0
+            assert cfg["input_size"][0] // cfg["output_size"][0] == \
+                cfg["input_size"][1] // cfg["output_size"][1], \
+                "kernel_size should be the same along height and width"
+            layer_config_list[-1]["mode"] = "AVE"
+            layer_config_list[-1]["kernel_size"] = \
+                cfg["input_size"][0] // cfg["output_size"][0]
+            layer_config_list[-1]["stride"] = layer_config_list[-1]["kernel_size"]
+        elif cfg["_type"] == "relu":
+            layer_config_list[-1]["type"] = "relu"
         elif cfg["_type"] == "AdaptiveAvgPool2d":
             layer_config_list[-1]["type"] = "pooling"
             assert cfg["input_size"][0] % cfg["output_size"][0] == 0
