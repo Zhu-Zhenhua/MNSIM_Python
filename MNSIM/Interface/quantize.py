@@ -589,7 +589,7 @@ class GroupLayer(nn.Module):
             [quantize_config['activation_bit'], -1]
         ]))
     def structure_forward(self, input):
-         # TRADITION
+        # TRADITION
         input_shape = input.shape
         input_list = torch.split(input, self.split_input, dim = 1)
         assert len(input_list) == self.groups
