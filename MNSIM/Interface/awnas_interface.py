@@ -87,7 +87,7 @@ class AWNASTrainTestInterface(TrainTestInterface):
         self.net.eval()
         for _, module in self.net.named_modules():
             if isinstance(module, nn.BatchNorm2d):
-                module.train()
+                # module.train()
                 pass
 
     def origin_evaluate(self, inputs):
