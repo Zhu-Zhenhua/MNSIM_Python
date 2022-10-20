@@ -141,9 +141,10 @@ class crossbar(device):
 		# Area unit: um^2
 		if self.area_calculation_method == 0:
 			area_factor = 1
+			self.xbar_area = area_factor * self.xbar_row * self.xbar_column * self.device_area + self.xbar_row * (7.3*2.7+9.5*3.8)*(self.transistor_tech/65)**2
 			# self.xbar_area = area_factor * self.xbar_row * self.xbar_column * self.device_area + self.xbar_row * (7.3*2.7+9.5*3.8)*(self.transistor_tech/65)**2
-			self.xbar_area = area_factor * self.xbar_row * self.xbar_column * self.device_area + 1150*self.xbar_row
-			# when consider driver, the area is: self.xbar_row * (7.3*2.7+9.5*3.8)*(self.transistor_tech/65)**2
+			# when consider driver for digital PIM, the area is: self.xbar_row * (7.3*2.7+9.5*3.8)*(self.transistor_tech/65)**2
+			# self.xbar_area = area_factor * self.xbar_row * self.xbar_column * self.device_area + 1150*self.xbar_row
 			# in A Fully Integrated Analog ReRAM Based 78.4TOPS/W Compute-In-Memory Chip with Fully Parallel MAC Computing, the driver area is 1150, for others, the driver area is (7.3*2.7+9.5*3.8)*(self.transistor_tech/65)**2, ref: Multi-level wordline driver for robust SRAM design in nano-scale CMOS technology
 		else:
 			if self.device_type == 'SRAM':
@@ -187,7 +188,9 @@ class crossbar(device):
 	def calculate_xbar_write_latency(self):
 		# Notice: before calculating write latency, xbar_write_config must be executed
 		self.xbar_write_latency	= self.device_write_latency * self.xbar_num_write_row
-		# self.xbar_write_latency = self.device_write_latency * min(math.ceil(num_write_row/num_multi_row), num_write_column)\
+		# self.xbar_write_latency = self.device_wr
+		# 
+		# ite_latency * min(math.ceil(num_write_row/num_multi_row), num_write_column)\
 		#                           * min(num_multi_row, num_write_row)
 			#unit: ns
 			#Assuming that the write operation of cells in one row can be performed concurrently

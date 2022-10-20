@@ -31,6 +31,8 @@ class TrainTestInterface(object):
         self.xbar_row = xbar_size[0]
         self.xbar_column = xbar_size[1]
         self.hardware_config['xbar_size'] = xbar_size[0]
+        self.hardware_config['type'] = int(xbar_config.get('Process element level', 'PIM_Type'))
+        self.hardware_config['DAC_num'] = int(xbar_config.get('Process element level', 'DAC_Num'))
         # xbar bit
         self.xbar_bit = int(xbar_config.get('Device level', 'Device_Level'))
         self.hardware_config['weight_bit'] = math.floor(math.log2(self.xbar_bit))

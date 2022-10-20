@@ -79,7 +79,7 @@ def main():
                         help="Enable fixed quantization range (max value), default: false")
     parser.add_argument("-DisPipe", "--disable_inner_pipeline", action='store_true', default=False,
                         help="Disable inner layer pipeline in latency modeling, default: false")
-    parser.add_argument("-D", "--device", default=1,
+    parser.add_argument("-D", "--device", default=6,
                         help="Determine hardware device for simulation, default: CPU")
     parser.add_argument("-DisModOut", "--disable_module_output", action='store_true', default=False,
                         help="Disable module simulation results output, default: false")

@@ -487,8 +487,7 @@ class ProcessElement(crossbar, DAC, ADC):
 		self.PE_digital_area = self.PE_adder_area + self.PE_shiftreg_area + self.PE_input_demux_area + self.PE_output_mux_area + self.PE_iReg_area + self.PE_oReg_area
 		self.PE_inbuf_area = self.inbuf.buf_area
 		self.PE_area = self.PE_xbar_area + self.PE_ADC_area + self.PE_DAC_area + self.PE_digital_area + self.PE_inbuf_area
-		print("xbar_area:", self.PE_xbar_area)
-		print("macro_area:", self.PE_xbar_area+self.PE_ADC_area+self.PE_DAC_area+self.PE_digital_area)
+		
 	
 	def calculate_demux_power(self):
 		transistor_power = 10*1.2/1e9
@@ -682,7 +681,7 @@ class ProcessElement(crossbar, DAC, ADC):
 		output_mux_latency = multiple_time*self.muxLatency
 		oReg_latency = self.digital_period
 
-		total_latency = xbar_latency+DAC_latency+ADC_latency+iReg_latency+shiftreg_latency+input_demux_latency+adder_latency+output_mux_latency+oReg_latency
+		total_latency = xbar_latency+DAC_latency+ADC_latency+iReg_latency+input_demux_latency+shiftreg_latency+adder_latency+output_mux_latency+oReg_latency
 		print("xbar_lat", xbar_latency)
 		print("ADC lat", ADC_latency)
 		print(DAC_latency)
@@ -705,6 +704,8 @@ class ProcessElement(crossbar, DAC, ADC):
 		oReg_energy = oReg_latency * self.PE_oReg_read_power
 
 		total_energy = xbar_energy+DAC_energy+ADC_energy+iReg_energy+shiftreg_energy+input_demux_energy+adder_energy+output_mux_energy+oReg_energy
+		print("xbar_area:", self.PE_xbar_area)
+		print("macro_area:", self.PE_xbar_area+self.PE_ADC_area+self.PE_DAC_area+self.PE_digital_area)
 		print("xbar_energy", xbar_energy)
 		print("DAC_energy", DAC_energy)
 		print("ADC_power", self.PE_ADC_read_power)
