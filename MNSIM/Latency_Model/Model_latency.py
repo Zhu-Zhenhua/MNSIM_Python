@@ -358,6 +358,8 @@ class Model_latency():
                     padding = int(layer_dict['Padding'])
                     inputbit = int(layer_dict['Inputbit'])
                     outputbit = int(layer_dict['outputbit'])
+                    Inputindex_list = list(map(int, layer_dict['Inputindex']))
+                    inputindex = Inputindex_list[0]
                     input_channel_PE = self.graph.layer_tileinfo[layer_id]['max_row'] / (kernelsize ** 2)
                     # the input channel number each PE processes
                     temp_tile_latency = tile_latency_analysis(SimConfig_path=self.SimConfig_path,
@@ -378,7 +380,7 @@ class Model_latency():
                     # Todo: update merge time (adder tree) and transfer data volume
                     transfer_time = self.graph.transLayer_distance[0][layer_id] * (outputchannel * outputbit / self.inter_tile_bandwidth)
                     # Todo: update transfer data volume
-                    last_layer_finish_time = max(self.finish_time[layer_id - 1])
+                    last_layer_finish_time = max(self.finish_time[layer_id+inputindex])
                     for i in range(output_size[0]):
                         for j in range(output_size[1]):
                             if kernelsize > 1:
@@ -387,7 +389,7 @@ class Model_latency():
                             else:
                                 last_layer_pos = i*stride*input_size[1]+j*stride
 
-                            if last_layer_pos > len(self.finish_time[layer_id - 1]) - 1:
+                            if last_layer_pos > len(self.finish_time[layer_id+inputindex]) - 1:
                                 print("pos error", i, j)
                             if (i == 0) & (j == 0):
                                 # the first output
@@ -431,6 +433,8 @@ class Model_latency():
                     input_size = int(layer_dict['Infeature'])
                     inputbit = int(layer_dict['Inputbit'])
                     outputbit = int(layer_dict['outputbit'])
+                    Inputindex_list = list(map(int, layer_dict['Inputindex']))
+                    inputindex = Inputindex_list[0]
                     self.layer_latency_initial()
                     indata = self.graph.layer_tileinfo[layer_id]['max_row'] * inputbit / 8
                     rdata = indata
@@ -453,7 +457,7 @@ class Model_latency():
                     # Todo: update merge time (adder tree) and transfer data volume
                     
 
-                    begin_time = max(self.finish_time[layer_id - 1])
+                    begin_time = max(self.finish_time[layer_id+inputindex])
                     compute_time = temp_tile_latency.tile_latency + merge_time + transfer_time + begin_time
                     self.pipe_result_update(layer_type='fc', begin_time=begin_time, compute_time=compute_time, layer_id=layer_id,
                         temp_tile_latency=temp_tile_latency, merge_time=merge_time, transfer_time=transfer_time, output_size=output_size)
@@ -468,6 +472,8 @@ class Model_latency():
                     padding = int(layer_dict['Padding'])
                     inputbit = int(layer_dict['Inputbit'])
                     outputbit = int(layer_dict['outputbit'])
+                    Inputindex_list = list(map(int, layer_dict['Inputindex']))
+                    inputindex = Inputindex_list[0]
                     temp_pooling_latency = pooling_latency_analysis(SimConfig_path=self.SimConfig_path,
                         indata=0, rdata=0, outprecision = outputbit,
                         default_inbuf_size = self.graph.max_inbuf_size,
@@ -489,7 +495,7 @@ class Model_latency():
                                 rdata = inputchannel * kernelsize ** 2 * inputbit / 8
                                 # from the line buffer to the input reg
                                 temp_pooling_latency.update_pooling_latency(indata=indata,rdata=rdata)
-                                begin_time = max(self.finish_time[layer_id - 1])
+                                begin_time = max(self.finish_time[layer_id+inputindex])
                                 compute_time = temp_pooling_latency.pooling_latency + merge_time + transfer_time + \
                                                begin_time
                                 self.pipe_result_update(layer_type='pooling', begin_time=begin_time, compute_time=compute_time, layer_id=layer_id, temp_pooling_latency=temp_pooling_latency, merge_time=merge_time, transfer_time=transfer_time)
@@ -621,6 +627,8 @@ class Model_latency():
                     padding = int(layer_dict['Padding'])
                     inputbit = int(layer_dict['Inputbit'])
                     outputbit = int(layer_dict['outputbit'])
+                    Inputindex_list = list(map(int, layer_dict['Inputindex']))
+                    inputindex = Inputindex_list[0]
                     input_channel_PE = self.graph.layer_tileinfo[layer_id]['max_row'] / (kernelsize ** 2)
                     ''' get the point number of this layer and then go back to the previous layer '''
                     # TODO: update the tile usage of this
@@ -638,12 +646,12 @@ class Model_latency():
                         cur_column = cur_point - cur_row * output_size[1]  # begin from 0
                         used_point = (stride * cur_row - padding) * input_size[1] + \
                                      (cur_column * stride - padding) * stride
-                        pre_point = Search(self.begin_time[layer_id][cur_point], self.begin_time[layer_id - 1])
+                        pre_point = Search(self.begin_time[layer_id][cur_point], self.begin_time[layer_id+inputindex])
                         # begin from 1
                         res = storage_capacity - (pre_point + cur_point - used_point)
                         # print(res)
                         if res <= 0:
-                            print("You need to stall the Pipeline on Layer %d" % (layer_id - 1))
+                            print("You need to stall the Pipeline on Layer %d" % (layer_id+inputindex))
                             break
                     # update the stall time
                     if res > 0:
@@ -653,24 +661,24 @@ class Model_latency():
                         pre_point = pre_point - 1
                         # print(pre_point)
                         while (pre_point < input_size[0] * input_size[1]):
-                            delta = self.begin_time[layer_id][cur_point] - self.begin_time[layer_id - 1][pre_point]
+                            delta = self.begin_time[layer_id][cur_point] - self.begin_time[layer_id+inputindex][pre_point]
                             assert delta > 0, "delta is not 0, something error"
                             # self.begin_time[layer_id - 1][pre_point] = self.begin_time[layer_id][cur_point]
                             consumption = stride ** 2
                             for num in range(consumption):
-                                self.begin_time[layer_id - 1][pre_point + num] += delta
-                                self.finish_time[layer_id - 1][pre_point + num] += delta
+                                self.begin_time[layer_id+inputindex][pre_point + num] += delta
+                                self.finish_time[layer_id+inputindex][pre_point + num] += delta
                                 pre_point += consumption
                             cur_point += 1
                         interval = []
-                        for i in range(len(self.begin_time[layer_id - 1])):
-                            interval.append([self.begin_time[layer_id - 1][i], self.finish_time[layer_id - 1][i]])
+                        for i in range(len(self.begin_time[layer_id+inputindex])):
+                            interval.append([self.begin_time[layer_id+inputindex][i], self.finish_time[layer_id+inputindex][i]])
                         stall_interval = merge_interval(interval)
-                        self.compute_interval[layer_id - 1] = stall_interval
+                        self.compute_interval[layer_id+inputindex] = stall_interval
                         print("++++++++++++++++++++++++++++++++")
-                        print("updated: ", self.begin_time[layer_id - 1])
-                        print("         ", self.finish_time[layer_id - 1])
-                        print("         ", self.compute_interval[layer_id - 1])
+                        print("updated: ", self.begin_time[layer_id+inputindex])
+                        print("         ", self.finish_time[layer_id+inputindex])
+                        print("         ", self.compute_interval[layer_id+inputindex])
                         print(len(stall_interval))
         return
 
@@ -910,6 +918,8 @@ class Model_latency():
                     padding = int(layer_dict['Padding'])
                     inputbit = int(layer_dict['Inputbit'])
                     outputbit = int(layer_dict['outputbit'])
+                    Inputindex_list = list(map(int, layer_dict['Inputindex']))
+                    inputindex = Inputindex_list[0]
                     input_channel_PE = self.graph.layer_tileinfo[layer_id]['max_row'] / (kernelsize ** 2)
                     # the input channel number each PE processes
                     temp_tile_latency = tile_latency_analysis(SimConfig_path=self.SimConfig_path,
